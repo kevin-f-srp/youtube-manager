@@ -201,6 +201,21 @@ class StudioTests(unittest.TestCase):
         )
         another.extensions["studio_jobs"].close()
 
+    def test_mixed_camera_time_formats(self):
+        from src.studio.worker import capture_time
+
+        self.assertEqual(
+            capture_time("2026:09:30 09:32:15", "x.jpg"), "2026-09-30T09:32:15"
+        )
+        self.assertEqual(
+            capture_time("", "IMG20260930093215.jpg"), "2026-09-30T09:32:15"
+        )
+        self.assertLess(
+            capture_time("2026:09:30 09:32:15", "x.jpg"),
+            capture_time("2026-10-01T16:12:41", "x.mp4"),
+        )
+        self.assertEqual(capture_time("invalid", "unknown.jpg"), "")
+
     def test_reject_path_like_shot_ids(self):
         current, edl = self.draft()
         edl["shots"][0]["id"] = "../escape"

@@ -1,6 +1,8 @@
 """One isolated subprocess per import, model request or render job."""
 
 import json
+import re
+from datetime import datetime
 import os
 from pathlib import Path
 import subprocess
@@ -33,6 +35,26 @@ def probe(path):
     return json.loads(p.stdout)
 
 
+def capture_time(value, filename):
+    """Comparable local wall-clock times, with camera filename fallback."""
+    if isinstance(value, str) and value:
+        try:
+            normalized = re.sub(r"^(\d{4}):(\d{2}):(\d{2})", r"\1-\2-\3", value)
+            when = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+            if when.tzinfo is not None:
+                when = when.astimezone().replace(tzinfo=None)
+            return when.isoformat(timespec="seconds")
+        except ValueError:
+            pass
+    match = re.search(r"(20\d{12})", filename)
+    if match:
+        try:
+            return datetime.strptime(match[1], "%Y%m%d%H%M%S").isoformat()
+        except ValueError:
+            pass
+    return ""
+
+
 def scan(folder, job):
     assets = read_json(folder / "assets.json")
     thumbs = folder / "thumbs"
@@ -43,7 +65,13 @@ def scan(folder, job):
             with Image.open(a["path"]) as source:
                 im = ImageOps.exif_transpose(source).convert("RGB")
                 a["width"], a["height"] = im.size
-                a["capture_time"] = str(source.getexif().get(36867, ""))
+                exif = source.getexif()
+                exif_time = (
+                    exif.get_ifd(34665).get(36867)
+                    or exif.get(36867)
+                    or exif.get(306, "")
+                )
+                a["capture_time"] = capture_time(exif_time, a["name"])
                 im.thumbnail((960, 720))
                 im.save(dst, quality=85)
         else:
@@ -88,6 +116,7 @@ def scan(folder, job):
                         str(dst),
                     ]
                 )
+        a["capture_time"] = capture_time(a.get("capture_time", ""), a["name"])
         a["thumbnail"] = dst.name
         write_json(
             job / "progress.json",
@@ -97,7 +126,7 @@ def scan(folder, job):
             },
         )
     # Prefer capture metadata when available; filename ordering is explicitly the fallback.
-    assets.sort(key=lambda a: (a.get("capture_time") or a["name"], a["name"]))
+    assets.sort(key=lambda a: (a.get("capture_time") or "9999", a["name"]))
     write_json(folder / "assets.json", assets)
     write_json(job / "result.json", {"count": len(assets)})
 
