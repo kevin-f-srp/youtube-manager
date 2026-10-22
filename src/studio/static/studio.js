@@ -1,25 +1,484 @@
-'use strict';
-const $=s=>document.querySelector(s);
-let config, current, selectedShot=null, dirty=false, jobSignature='', projectId='', showingSource=false;
-const chosen=new Set();
-const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
-function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;setTimeout(()=>$('#toast').hidden=true,7000);}
-async function api(path,method='GET',body){const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json','X-Studio-Token':config?.token||''},body:body===undefined?undefined:JSON.stringify(body)});let d;try{d=await r.json();}catch{throw Error(`请求失败 (${r.status})`);}if(!r.ok)throw Error(d.error||`请求失败 (${r.status})`);return d;}
-const base=()=>`/projects/${projectId}`;
-function mark(){dirty=true;$('#dirty').textContent='有未保存修改';}
-function duration(s){let t=s.out-s.in;if(s.skip_on!==false)for(const [a,b] of s.skip||[])t-=Math.max(0,Math.min(b,s.out)-Math.max(a,s.in));return Math.max(0,t)/(s.speed||1);}
-function timeAt(id){let t=0;for(const s of current.edl.shots){if(s.id===id)return t;if(s.enabled!==false)t+=duration(s);}return t;}
-function credentialStatus(){const p=config.providers.find(p=>p.id===$('#provider').value);$('#credentials').textContent=`${p.env}：${p.configured?'已配置':'尚未配置，可在下方输入密钥或设置服务环境变量'}。`;}
-async function refreshProjects(select){const ps=await api('/projects');$('#projects').replaceChildren(el('option','选择项目'));$('#projects').firstChild.value='';for(const p of ps){const o=el('option',p.name);o.value=p.id;$('#projects').append(o);}if(select){$('#projects').value=select;await loadProject(select);}}
-async function loadProject(id){projectId=id;if(id)localStorage.setItem('studio-project',id);chosen.clear();selectedShot=null;dirty=false;jobSignature='';if(!id)return;current=await api(base());$('#project-name').textContent=current.project.name;$('#version').textContent='版本 '+current.revision.slice(0,8);$('#dirty').textContent='';$('#context').textContent='上下文：整个项目';renderAssets();renderShots();showPreview();await poll();}
-function showPreview(){if(!current)return;showingSource=false;$('#preview').src='/api'+base()+'/preview?v='+Date.now();$('#preview-label').textContent='最近一次成片预览（修改后需重新生成）';}
-function renderAssets(){$('#asset-count').textContent=current.assets.length;const root=$('#assets');root.replaceChildren();for(const a of current.assets){const box=el('div',undefined,'asset');const check=el('input');check.type='checkbox';check.checked=chosen.has(a.id);check.setAttribute('aria-label','选择 '+a.name);check.onchange=()=>{if(check.checked)chosen.add(a.id);else chosen.delete(a.id);};const img=el('img');img.alt=a.name;img.loading='lazy';if(a.thumbnail)img.src='/api'+base()+`/assets/${a.id}/thumbnail`;img.onclick=()=>{showingSource=true;$('#welcome').hidden=true;if(a.kind==='video'){$('#preview').src='/api'+base()+`/assets/${a.id}/original`;$('#preview').poster='';}else{$('#preview').removeAttribute('src');$('#preview').load();$('#preview').poster='/api'+base()+`/assets/${a.id}/original`;}$('#preview-label').textContent='原素材 · '+a.name;};const add=el('button','＋');add.title='加入镜头列表';add.onclick=()=>{const s={id:'s'+crypto.randomUUID().replaceAll('-','').slice(0,12),clip:a.kind==='photo'?a.name:a.name.replace(/\.[^.]+$/,''),in:0,out:a.kind==='photo'?3:Math.min(6,a.duration||6),enabled:true,audio:a.kind==='photo'?'mute':'ambient',note:a.name};current.edl.shots.push(s);mark();renderShots();};box.append(img,check,add,el('div',`${a.kind==='photo'?'照片':'视频'} · ${a.name}`, 'meta'));root.append(box);}}
-function renderShots(){const root=$('#shots');root.replaceChildren();if(!current.edl.shots.length){root.append(el('p','点击素材上的 ＋ 添加镜头，或让剪辑助手生成初稿。','empty'));return;}current.edl.shots.forEach((s,i)=>{const row=el('div',undefined,'shot'+(selectedShot===s.id?' active':''));const head=el('div',undefined,'shot-head');const on=el('input');on.type='checkbox';on.checked=s.enabled!==false;on.setAttribute('aria-label','启用镜头 '+s.id);on.onclick=e=>e.stopPropagation();on.onchange=()=>{s.enabled=on.checked;mark();};head.append(on,el('span',`${s.id} · ${timeAt(s.id).toFixed(1)}s · ${s.note||s.clip||'标题卡'}`));head.onclick=()=>{selectedShot=s.id;$('#context').textContent=`上下文：${s.id} · 成片 ${timeAt(s.id).toFixed(1)} 秒`;if(showingSource)showPreview();$('#preview').currentTime=timeAt(s.id);renderShots();};for(const [label,delta] of [['↑',-1],['↓',1]]){const b=el('button',label);b.onclick=e=>{e.stopPropagation();const j=i+delta;if(j<0||j>=current.edl.shots.length)return;[current.edl.shots[i],current.edl.shots[j]]=[current.edl.shots[j],current.edl.shots[i]];mark();renderShots();};head.append(b);}row.append(head);if(selectedShot===s.id){const fields=el('div',undefined,'shot-fields');for(const [key,label] of [['in','原片起点 / 秒'],['out','原片终点 / 秒'],['speed','播放倍速']]){const l=el('label',label),input=el('input');input.type='number';input.step='.1';input.value=s[key]??1;input.onchange=()=>{s[key]=Number(input.value);mark();};l.append(input);fields.append(l);}row.append(fields);const l=el('label','画幅'),sel=el('select');for(const [v,label] of [['auto','自动'],['cover','填满画面'],['blur','完整画幅 + 模糊背景']]){const op=el('option',label);op.value=v;sel.append(op);}sel.value=typeof s.fit==='string'?s.fit:'auto';sel.onchange=()=>{s.fit=sel.value;mark();};l.append(sel);row.append(l);const details=el('details'),summary=el('summary','字幕（原素材时间，JSON）'),area=el('textarea');area.rows=5;area.value=JSON.stringify(s.subs||[],null,2);area.onchange=()=>{try{s.subs=JSON.parse(area.value);mark();}catch{toast('字幕 JSON 格式无效，请修正后保存');}};details.append(summary,area);row.append(details);}root.append(row);});}
-async function save(){if(!current)throw Error('请先选择项目');const d=await api(base()+'/edl','PUT',{revision:current.revision,edl:current.edl});current.revision=d.revision;dirty=false;$('#dirty').textContent='已保存';$('#version').textContent='版本 '+d.revision.slice(0,8);}
-async function start(payload){if(!current)throw Error('请先导入或选择项目');if(dirty)await save();await api(base()+'/jobs','POST',payload);jobSignature='';await poll();}
-async function poll(){if(!projectId)return;const id=projectId,js=await api(base()+'/jobs');if(id!==projectId)return;const sig=JSON.stringify(js);if(sig===jobSignature)return;jobSignature=sig;$('#task-count').textContent=js.length;const root=$('#jobs');root.replaceChildren();const chat=$('#chat');chat.replaceChildren();for(const j of [...js].reverse()){if(j.message)chat.append(el('div',j.message,'bubble user'));if(j.result?.proposal)chat.append(el('div',j.result.proposal.summary,'bubble'));}for(const j of js){const box=el('div',undefined,'job'),states={running:'处理中',completed:'完成',failed:'失败',cancelled:'已取消',interrupted:'已中断'};box.append(el('strong',`${{scan:'素材整理',agent:'剪辑建议',render:'视频导出'}[j.kind]} · ${states[j.state]||j.state}`));if(j.progress){const p=el('progress');p.max=1;p.value=j.progress.progress||0;box.append(el('p',j.progress.step||'处理中'),p);}if(j.error)box.append(el('p',typeof j.error==='string'?j.error:j.error.error));if(j.state==='running'){const b=el('button','取消');b.onclick=()=>safe(async()=>{await api(base()+`/jobs/${j.id}/cancel`,'POST',{});await poll();});box.append(b);}if(j.result?.proposal){const b=el('button','应用建议');b.disabled=j.result.base_revision!==current.revision||dirty;b.onclick=()=>safe(async()=>{await api(base()+`/jobs/${j.id}/apply`,'POST',{});await loadProject(projectId);toast('建议已应用，可以生成预览');});box.append(b);}if(j.state==='completed'&&j.result?.output){box.append(el('p',`${j.result.width} × ${j.result.height} · ${Number(j.result.duration).toFixed(1)} 秒 · 完整解码通过`));const a=el('a','下载成片');a.href='/api'+base()+`/jobs/${j.id}/output?download=1`;box.append(a);const b=el('button','播放');b.onclick=()=>{$('#preview').src='/api'+base()+`/jobs/${j.id}/output`;$('#preview-label').textContent='导出版本 '+j.result.revision.slice(0,8);};box.append(b);}root.append(box);}if(js.some(j=>j.kind==='scan'&&j.state==='completed')&&current.assets.some(a=>!a.thumbnail)){const fresh=await api(base());current.assets=fresh.assets;renderAssets();}}
-async function safe(fn){try{await fn();}catch(e){toast(e.message);}}
-$('#import-open').onclick=()=>$('#import-dialog').showModal();$('#import-cancel').onclick=()=>$('#import-dialog').close();$('#import-form').onsubmit=e=>{e.preventDefault();safe(async()=>{const d=await api('/projects','POST',{path:$('#source-path').value});$('#import-dialog').close();await refreshProjects(d.id);});};$('#projects').onchange=()=>safe(async()=>{if(dirty){$('#projects').value=projectId;throw Error('请先保存当前修改再切换项目');}await loadProject($('#projects').value);});$('#save').onclick=()=>safe(save);$('#scan').onclick=()=>safe(()=>start({kind:'scan'}));$('#render-preview').onclick=()=>safe(()=>start({kind:'render',mode:'preview'}));$('#render-final').onclick=()=>safe(()=>start({kind:'render',mode:'final'}));$('#show-preview').onclick=showPreview;$('#provider').onchange=()=>{credentialStatus();localStorage.setItem('studio-provider',$('#provider').value);$('#model').value=localStorage.getItem('studio-model-'+$('#provider').value)||'';};$('#send').onclick=()=>safe(async()=>{const message=$('#message').value.trim();if(!message)throw Error('请输入剪辑要求');localStorage.setItem('studio-model-'+$('#provider').value,$('#model').value);await start({kind:'agent',provider:$('#provider').value,model:$('#model').value.trim(),base_url:$('#base-url').value.trim()||null,message,shot_id:selectedShot,time:$('#preview').currentTime||0,asset_ids:[...chosen]});$('#message').value='';});$('#preview').onloadedmetadata=()=>{$('#welcome').hidden=true;$('#preview').poster='';};$('#preview').onerror=()=>{if(!showingSource)$('#welcome').hidden=false;};window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
-safe(async()=>{config=await api('/config');$('#connection').textContent=config.harness_installed?'本机服务已连接 · Harness 已安装':'本机服务已连接 · 需安装 Harness';$('#provider').value=localStorage.getItem('studio-provider')||'openai';$('#model').value=localStorage.getItem('studio-model-'+$('#provider').value)||'';credentialStatus();await refreshProjects();const last=localStorage.getItem('studio-project');if(last&&[...$('#projects').options].some(o=>o.value===last)){$('#projects').value=last;await loadProject(last);}setInterval(()=>safe(poll),2000);});
+"use strict";
+const $ = (s) => document.querySelector(s);
+let config,
+  current,
+  selectedShot = null,
+  dirty = false,
+  jobSignature = "",
+  projectId = "",
+  showingSource = false;
+const chosen = new Set();
+const el = (tag, text, cls) => {
+  const n = document.createElement(tag);
+  if (text !== undefined) n.textContent = text;
+  if (cls) n.className = cls;
+  return n;
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").hidden = false;
+  setTimeout(() => ($("#toast").hidden = true), 7000);
+}
+async function api(path, method = "GET", body) {
+  const r = await fetch("/api" + path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Studio-Token": config?.token || "",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let d;
+  try {
+    d = await r.json();
+  } catch {
+    throw Error(`请求失败 (${r.status})`);
+  }
+  if (!r.ok) throw Error(d.error || `请求失败 (${r.status})`);
+  return d;
+}
+const base = () => `/projects/${projectId}`;
+function mark() {
+  dirty = true;
+  $("#dirty").textContent = "有未保存修改";
+}
+function duration(s) {
+  let t = s.out - s.in;
+  if (s.skip_on !== false)
+    for (const [a, b] of s.skip || [])
+      t -= Math.max(0, Math.min(b, s.out) - Math.max(a, s.in));
+  return Math.max(0, t) / (s.speed || 1);
+}
+function timeAt(id) {
+  let t = 0;
+  for (const s of current.edl.shots) {
+    if (s.id === id) return t;
+    if (s.enabled !== false) t += duration(s);
+  }
+  return t;
+}
+function credentialStatus() {
+  const p = config.providers.find((p) => p.id === $("#provider").value);
+  $("#credentials").textContent =
+    `${p.env}：${p.configured ? "已配置" : "尚未配置，可在下方输入密钥或设置服务环境变量"}。`;
+}
+async function refreshProjects(select) {
+  const ps = await api("/projects");
+  $("#projects").replaceChildren(el("option", "选择项目"));
+  $("#projects").firstChild.value = "";
+  for (const p of ps) {
+    const o = el("option", p.name);
+    o.value = p.id;
+    $("#projects").append(o);
+  }
+  if (select) {
+    $("#projects").value = select;
+    await loadProject(select);
+  }
+}
+async function loadProject(id) {
+  projectId = id;
+  if (id) localStorage.setItem("studio-project", id);
+  chosen.clear();
+  selectedShot = null;
+  dirty = false;
+  jobSignature = "";
+  if (!id) return;
+  current = await api(base());
+  $("#project-name").textContent = current.project.name;
+  $("#version").textContent = "版本 " + current.revision.slice(0, 8);
+  $("#dirty").textContent = "";
+  $("#context").textContent = "上下文：整个项目";
+  renderAssets();
+  renderShots();
+  showPreview();
+  await poll();
+}
+function showPreview() {
+  if (!current) return;
+  showingSource = false;
+  $("#preview").src = "/api" + base() + "/preview?v=" + Date.now();
+  $("#preview-label").textContent = "最近一次成片预览（修改后需重新生成）";
+}
+function renderAssets() {
+  $("#asset-count").textContent = current.assets.length;
+  const root = $("#assets");
+  root.replaceChildren();
+  for (const a of current.assets) {
+    const box = el("div", undefined, "asset");
+    const check = el("input");
+    check.type = "checkbox";
+    check.checked = chosen.has(a.id);
+    check.setAttribute("aria-label", "选择 " + a.name);
+    check.onchange = () => {
+      if (check.checked) chosen.add(a.id);
+      else chosen.delete(a.id);
+    };
+    const img = el("img");
+    img.alt = a.name;
+    img.loading = "lazy";
+    if (a.thumbnail) img.src = "/api" + base() + `/assets/${a.id}/thumbnail`;
+    img.onclick = () => {
+      showingSource = true;
+      $("#welcome").hidden = true;
+      if (a.kind === "video") {
+        $("#preview").src = "/api" + base() + `/assets/${a.id}/original`;
+        $("#preview").poster = "";
+      } else {
+        $("#preview").removeAttribute("src");
+        $("#preview").load();
+        $("#preview").poster = "/api" + base() + `/assets/${a.id}/original`;
+      }
+      $("#preview-label").textContent = "原素材 · " + a.name;
+    };
+    const add = el("button", "＋");
+    add.title = "加入镜头列表";
+    add.onclick = () => {
+      const s = {
+        id: "s" + crypto.randomUUID().replaceAll("-", "").slice(0, 12),
+        clip: a.kind === "photo" ? a.name : a.name.replace(/\.[^.]+$/, ""),
+        in: 0,
+        out: a.kind === "photo" ? 3 : Math.min(6, a.duration || 6),
+        enabled: true,
+        audio: a.kind === "photo" ? "mute" : "ambient",
+        note: a.name,
+      };
+      current.edl.shots.push(s);
+      mark();
+      renderShots();
+    };
+    box.append(
+      img,
+      check,
+      add,
+      el("div", `${a.kind === "photo" ? "照片" : "视频"} · ${a.name}`, "meta"),
+    );
+    root.append(box);
+  }
+}
+function renderShots() {
+  const root = $("#shots");
+  root.replaceChildren();
+  if (!current.edl.shots.length) {
+    root.append(
+      el("p", "点击素材上的 ＋ 添加镜头，或让剪辑助手生成初稿。", "empty"),
+    );
+    return;
+  }
+  current.edl.shots.forEach((s, i) => {
+    const row = el(
+      "div",
+      undefined,
+      "shot" + (selectedShot === s.id ? " active" : ""),
+    );
+    const head = el("div", undefined, "shot-head");
+    const on = el("input");
+    on.type = "checkbox";
+    on.checked = s.enabled !== false;
+    on.setAttribute("aria-label", "启用镜头 " + s.id);
+    on.onclick = (e) => e.stopPropagation();
+    on.onchange = () => {
+      s.enabled = on.checked;
+      mark();
+    };
+    head.append(
+      on,
+      el(
+        "span",
+        `${s.id} · ${timeAt(s.id).toFixed(1)}s · ${s.note || s.clip || "标题卡"}`,
+      ),
+    );
+    head.onclick = () => {
+      selectedShot = s.id;
+      $("#context").textContent =
+        `上下文：${s.id} · 成片 ${timeAt(s.id).toFixed(1)} 秒`;
+      if (showingSource) showPreview();
+      $("#preview").currentTime = timeAt(s.id);
+      renderShots();
+    };
+    for (const [label, delta] of [
+      ["↑", -1],
+      ["↓", 1],
+    ]) {
+      const b = el("button", label);
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const j = i + delta;
+        if (j < 0 || j >= current.edl.shots.length) return;
+        [current.edl.shots[i], current.edl.shots[j]] = [
+          current.edl.shots[j],
+          current.edl.shots[i],
+        ];
+        mark();
+        renderShots();
+      };
+      head.append(b);
+    }
+    row.append(head);
+    if (selectedShot === s.id) {
+      const fields = el("div", undefined, "shot-fields");
+      for (const [key, label] of [
+        ["in", "原片起点 / 秒"],
+        ["out", "原片终点 / 秒"],
+        ["speed", "播放倍速"],
+      ]) {
+        const l = el("label", label),
+          input = el("input");
+        input.type = "number";
+        input.step = ".1";
+        input.value = s[key] ?? 1;
+        input.onchange = () => {
+          s[key] = Number(input.value);
+          mark();
+        };
+        l.append(input);
+        fields.append(l);
+      }
+      row.append(fields);
+      const l = el("label", "画幅"),
+        sel = el("select");
+      for (const [v, label] of [
+        ["auto", "自动"],
+        ["cover", "填满画面"],
+        ["blur", "完整画幅 + 模糊背景"],
+      ]) {
+        const op = el("option", label);
+        op.value = v;
+        sel.append(op);
+      }
+      sel.value = typeof s.fit === "string" ? s.fit : "auto";
+      sel.onchange = () => {
+        s.fit = sel.value;
+        mark();
+      };
+      l.append(sel);
+      row.append(l);
+      const details = el("details"),
+        summary = el("summary", "字幕（原素材时间，JSON）"),
+        area = el("textarea");
+      area.rows = 5;
+      area.value = JSON.stringify(s.subs || [], null, 2);
+      area.onchange = () => {
+        try {
+          s.subs = JSON.parse(area.value);
+          mark();
+        } catch {
+          toast("字幕 JSON 格式无效，请修正后保存");
+        }
+      };
+      details.append(summary, area);
+      row.append(details);
+    }
+    root.append(row);
+  });
+}
+async function save() {
+  if (!current) throw Error("请先选择项目");
+  const d = await api(base() + "/edl", "PUT", {
+    revision: current.revision,
+    edl: current.edl,
+  });
+  current.revision = d.revision;
+  dirty = false;
+  $("#dirty").textContent = "已保存";
+  $("#version").textContent = "版本 " + d.revision.slice(0, 8);
+}
+async function start(payload) {
+  if (!current) throw Error("请先导入或选择项目");
+  if (dirty) await save();
+  await api(base() + "/jobs", "POST", payload);
+  jobSignature = "";
+  await poll();
+}
+async function poll() {
+  if (!projectId) return;
+  const id = projectId,
+    js = await api(base() + "/jobs");
+  if (id !== projectId) return;
+  const sig = JSON.stringify(js);
+  if (sig === jobSignature) return;
+  jobSignature = sig;
+  $("#task-count").textContent = js.length;
+  const root = $("#jobs");
+  root.replaceChildren();
+  const chat = $("#chat");
+  chat.replaceChildren();
+  for (const j of [...js].reverse()) {
+    if (j.message) chat.append(el("div", j.message, "bubble user"));
+    if (j.result?.proposal)
+      chat.append(el("div", j.result.proposal.summary, "bubble"));
+  }
+  for (const j of js) {
+    const box = el("div", undefined, "job"),
+      states = {
+        running: "处理中",
+        completed: "完成",
+        failed: "失败",
+        cancelled: "已取消",
+        interrupted: "已中断",
+      };
+    box.append(
+      el(
+        "strong",
+        `${{ scan: "素材整理", agent: "剪辑建议", render: "视频导出" }[j.kind]} · ${states[j.state] || j.state}`,
+      ),
+    );
+    if (j.progress) {
+      const p = el("progress");
+      p.max = 1;
+      p.value = j.progress.progress || 0;
+      box.append(el("p", j.progress.step || "处理中"), p);
+    }
+    if (j.error)
+      box.append(
+        el("p", typeof j.error === "string" ? j.error : j.error.error),
+      );
+    if (j.state === "running") {
+      const b = el("button", "取消");
+      b.onclick = () =>
+        safe(async () => {
+          await api(base() + `/jobs/${j.id}/cancel`, "POST", {});
+          await poll();
+        });
+      box.append(b);
+    }
+    if (j.result?.proposal) {
+      const b = el("button", "应用建议");
+      b.disabled = j.result.base_revision !== current.revision || dirty;
+      b.onclick = () =>
+        safe(async () => {
+          await api(base() + `/jobs/${j.id}/apply`, "POST", {});
+          await loadProject(projectId);
+          toast("建议已应用，可以生成预览");
+        });
+      box.append(b);
+    }
+    if (j.state === "completed" && j.result?.output) {
+      box.append(
+        el(
+          "p",
+          `${j.result.width} × ${j.result.height} · ${Number(j.result.duration).toFixed(1)} 秒 · 完整解码通过`,
+        ),
+      );
+      const a = el("a", "下载成片");
+      a.href = "/api" + base() + `/jobs/${j.id}/output?download=1`;
+      box.append(a);
+      const b = el("button", "播放");
+      b.onclick = () => {
+        $("#preview").src = "/api" + base() + `/jobs/${j.id}/output`;
+        $("#preview-label").textContent =
+          "导出版本 " + j.result.revision.slice(0, 8);
+      };
+      box.append(b);
+    }
+    root.append(box);
+  }
+  if (
+    js.some((j) => j.kind === "scan" && j.state === "completed") &&
+    current.assets.some((a) => !a.thumbnail)
+  ) {
+    const fresh = await api(base());
+    current.assets = fresh.assets;
+    renderAssets();
+  }
+}
+async function safe(fn) {
+  try {
+    await fn();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+$("#import-open").onclick = () => $("#import-dialog").showModal();
+$("#import-cancel").onclick = () => $("#import-dialog").close();
+$("#import-form").onsubmit = (e) => {
+  e.preventDefault();
+  safe(async () => {
+    const d = await api("/projects", "POST", { path: $("#source-path").value });
+    $("#import-dialog").close();
+    await refreshProjects(d.id);
+  });
+};
+$("#projects").onchange = () =>
+  safe(async () => {
+    if (dirty) {
+      $("#projects").value = projectId;
+      throw Error("请先保存当前修改再切换项目");
+    }
+    await loadProject($("#projects").value);
+  });
+$("#save").onclick = () => safe(save);
+$("#scan").onclick = () => safe(() => start({ kind: "scan" }));
+$("#render-preview").onclick = () =>
+  safe(() => start({ kind: "render", mode: "preview" }));
+$("#render-final").onclick = () =>
+  safe(() => start({ kind: "render", mode: "final" }));
+$("#show-preview").onclick = showPreview;
+$("#provider").onchange = () => {
+  credentialStatus();
+  localStorage.setItem("studio-provider", $("#provider").value);
+  $("#model").value =
+    localStorage.getItem("studio-model-" + $("#provider").value) || "";
+};
+$("#send").onclick = () =>
+  safe(async () => {
+    const message = $("#message").value.trim();
+    if (!message) throw Error("请输入剪辑要求");
+    localStorage.setItem(
+      "studio-model-" + $("#provider").value,
+      $("#model").value,
+    );
+    await start({
+      kind: "agent",
+      provider: $("#provider").value,
+      model: $("#model").value.trim(),
+      base_url: $("#base-url").value.trim() || null,
+      message,
+      shot_id: selectedShot,
+      time: $("#preview").currentTime || 0,
+      asset_ids: [...chosen],
+    });
+    $("#message").value = "";
+  });
+$("#preview").onloadedmetadata = () => {
+  $("#welcome").hidden = true;
+  $("#preview").poster = "";
+};
+$("#preview").onerror = () => {
+  if (!showingSource) $("#welcome").hidden = false;
+};
+window.addEventListener("beforeunload", (e) => {
+  if (dirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+safe(async () => {
+  config = await api("/config");
+  $("#connection").textContent = config.harness_installed
+    ? "本机服务已连接 · Harness 已安装"
+    : "本机服务已连接 · 需安装 Harness";
+  $("#provider").value = localStorage.getItem("studio-provider") || "openai";
+  $("#model").value =
+    localStorage.getItem("studio-model-" + $("#provider").value) || "";
+  credentialStatus();
+  await refreshProjects();
+  const last = localStorage.getItem("studio-project");
+  if (last && [...$("#projects").options].some((o) => o.value === last)) {
+    $("#projects").value = last;
+    await loadProject(last);
+  }
+  setInterval(() => safe(poll), 2000);
+});
 
-$('#set-key').onclick=()=>safe(async()=>{await api('/model-credentials','POST',{provider:$('#provider').value,key:$('#api-key').value});$('#api-key').value='';config=await api('/config');credentialStatus();toast('密钥已配置，仅保存在本次服务内存中');});
+$("#set-key").onclick = () =>
+  safe(async () => {
+    await api("/model-credentials", "POST", {
+      provider: $("#provider").value,
+      key: $("#api-key").value,
+    });
+    $("#api-key").value = "";
+    config = await api("/config");
+    credentialStatus();
+    toast("密钥已配置，仅保存在本次服务内存中");
+  });
