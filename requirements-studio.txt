@@ -1,0 +1,7 @@
+# Independently installed prototype; do not upgrade the existing editor environment.
+Flask>=3.1,<4
+Pillow>=11,<14
+numpy>=1.24
+requests>=2.31
+# Explicit prerelease pin: plugin config and SDK were validated against this runtime.
+deepseek-harness-sdk==0.2.1rc2

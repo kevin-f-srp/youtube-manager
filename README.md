@@ -217,3 +217,10 @@ A project is a folder `NN - Place/`:
 - `src/analytics/` feeds the packaging loop, which biases future titles and thumbnails toward what
   beat the channel's baseline.
 - License: MIT.
+
+## Local video studio prototype
+
+A single-page workbench for importing media, reviewing shots, requesting GPT/Claude edits through
+DeepSeek Harness, and rendering previews or 4K exports is available in `src/studio/`.
+It keeps application-owned project copies and does not overwrite source projects.
+See [setup, workflow, verification, and current limitations](docs/video-studio.md).
