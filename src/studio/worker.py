@@ -214,6 +214,8 @@ def render(folder, job, request):
     edl["project"], edl["source_dir"] = str(stage), str(raw)
     native_photos = (engine / "src/editor/media.py").exists()
     size = (1920, 1080) if request["mode"] == "preview" else (3840, 2160)
+    if edl.get("canvas") == "9:16":
+        size = size[::-1]
     generated = job / "generated"
     generated.mkdir()
     for shot in edl["shots"]:
@@ -261,7 +263,14 @@ def render(folder, job, request):
                     "mode": "crop",
                     "y": (shot.get("zoom") or {}).get("y", 0.5),
                 }
-            a = next((a for name, a in assets.items() if Path(name).stem == clip), None)
+            a = next(
+                (
+                    a
+                    for name, a in assets.items()
+                    if a["kind"] == "video" and Path(name).stem == clip
+                ),
+                None,
+            )
             if a:
                 # Normalize filename extension without modifying the source.
                 alias = generated / (hashlib_id(clip) + ".MP4")
@@ -298,12 +307,16 @@ def render(folder, job, request):
     output = Path(status["output"])
     if status.get("state") != "done" or not output.is_file():
         raise RuntimeError("渲染器未生成已完成的输出")
+    if status.get("audio", {}).get("ok") is False:
+        raise RuntimeError("声音检查未通过，请检查任务目录中的 render_status.json")
     # Full decode is part of the job, not inferred from encoder completion.
     run_command(
         ["ffmpeg", "-v", "error", "-xerror", "-i", str(output), "-f", "null", "-"]
     )
     info = probe(output)
     video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    if (video["width"], video["height"]) != size:
+        raise RuntimeError("输出尺寸与所选预览/4K 模式不一致")
     write_json(
         job / "result.json",
         {

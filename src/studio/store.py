@@ -219,7 +219,8 @@ def validate(edl, original, assets):
             (
                 a
                 for a in assets
-                if a["name"] == s.get("clip") or Path(a["name"]).stem == s.get("clip")
+                if (a["name"] if a["kind"] == "photo" else Path(a["name"]).stem)
+                == s.get("clip")
             ),
             None,
         )
