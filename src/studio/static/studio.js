@@ -493,11 +493,16 @@ $("#render-final").onclick = () =>
 $("#show-preview").onclick = () => safe(showPreview);
 $("#anchor-frame").onclick = () => safe(() => { $("#attach-frame").checked = true; anchorFrame(); });
 $("#clear-context").onclick = clearAnchor;
+$("#base-url").oninput = () => {
+  localStorage.setItem("studio-base-url-" + $("#provider").value, $("#base-url").value.trim());
+};
 $("#provider").onchange = () => {
   credentialStatus();
   localStorage.setItem("studio-provider", $("#provider").value);
   $("#model").value =
     localStorage.getItem("studio-model-" + $("#provider").value) || "";
+  $("#base-url").value =
+    localStorage.getItem("studio-base-url-" + $("#provider").value) || "";
 };
 $("#send").onclick = () =>
   safe(async () => {
@@ -542,6 +547,8 @@ safe(async () => {
   $("#provider").value = localStorage.getItem("studio-provider") || "openai";
   $("#model").value =
     localStorage.getItem("studio-model-" + $("#provider").value) || "";
+  $("#base-url").value =
+    localStorage.getItem("studio-base-url-" + $("#provider").value) || "";
   credentialStatus();
   await refreshProjects();
   const last = localStorage.getItem("studio-project");
