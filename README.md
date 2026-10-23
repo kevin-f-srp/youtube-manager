@@ -220,7 +220,9 @@ A project is a folder `NN - Place/`:
 
 ## Local video studio prototype
 
-A single-page workbench for importing media, reviewing shots, requesting GPT/Claude edits through
+A single-page workbench for importing media, reviewing shots, continuing project-specific GPT/Claude agent sessions through
 DeepSeek Harness, and rendering previews or 4K exports is available in `src/studio/`.
-It keeps application-owned project copies and does not overwrite source projects.
+The agent can inspect media, edit shots and route maps, generate checked previews, and restore
+previous editing plans through scoped tools. Messages queue while work is running. It keeps
+application-owned project copies and does not overwrite source projects.
 See [setup, workflow, verification, and current limitations](docs/video-studio.md).

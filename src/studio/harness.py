@@ -1,4 +1,4 @@
-"""Pinned Harness integration. No model-facing shell or filesystem tools."""
+"""Pinned Harness integration with resumable sessions and scoped editing tools."""
 
 import base64
 import json
@@ -111,3 +111,107 @@ def propose(home, provider, model, prompt, images=(), base_url=None):
     if answer.startswith("```"):
         answer = answer.split("\n", 1)[1].rsplit("```", 1)[0]
     return json.loads(answer)
+
+
+def run_agent(
+    home,
+    folder,
+    job,
+    provider,
+    model,
+    prompt,
+    images=(),
+    base_url=None,
+    on_notification=None,
+):
+    """Resume one durable project session; each worker owns its runtime process."""
+    import sys
+    from deepseek_harness import DeepSeekHarness
+    from .store import read_json, write_json
+
+    home = Path(home).resolve()
+    home.mkdir(parents=True, exist_ok=True)
+    rows = patch_for(provider, model, base_url)
+    rows.append(
+        {
+            "insert": [
+                {
+                    "id": "studio-tools",
+                    "name": str(Path(__file__).with_name("agent_tools.mjs").resolve()),
+                    "config": {
+                        "python": sys.executable,
+                        "repo": str(Path(__file__).resolve().parents[2]),
+                        "folder": str(folder),
+                        "job": str(job),
+                    },
+                }
+            ]
+        }
+    )
+    patch = home / "studio.patch.json"
+    write_json(patch, rows)
+    state_path = home / "session.json"
+    state = read_json(state_path) if state_path.exists() else {}
+    if state and (state["provider"], state["model"], state.get("base_url")) != (
+        provider,
+        model,
+        base_url,
+    ):
+        raise ValueError(
+            "此项目已有持续会话。请沿用原模型与接口地址，或在页面新建会话后切换。"
+        )
+    content = [{"type": "text", "text": prompt}]
+    for name, path in images:
+        content.extend(
+            [
+                {"type": "text", "text": name},
+                {
+                    "type": "image",
+                    "mimeType": "image/jpeg",
+                    "data": base64.b64encode(Path(path).read_bytes()).decode(),
+                },
+            ]
+        )
+    with DeepSeekHarness(
+        provider=provider,
+        model=model,
+        max_tokens=12000,
+        cwd=str(folder),
+        runtime_cwd=str(home),
+        dsh_home=str(home / "runtime"),
+        profile="sdk-minimal",
+        patches=(str(patch),),
+        shutdown_timeout_seconds=10,
+    ) as harness:
+        session = (
+            harness.resume_session(state["session_id"])
+            if state
+            else harness.start_session()
+        )
+        # Persist identity before the turn so a failed/cancelled turn does not silently fork history.
+        write_json(
+            state_path,
+            {
+                "session_id": session.id,
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+            },
+        )
+        import signal, threading
+
+        previous = None
+        if threading.current_thread() is threading.main_thread():
+
+            def terminate(signum, frame):
+                raise SystemExit(143)
+
+            previous = signal.signal(signal.SIGTERM, terminate)
+        try:
+            result = session.run(content, on_notification=on_notification)
+        finally:
+            if previous is not None:
+                signal.signal(signal.SIGTERM, previous)
+    if result.finish_reason != "completed":
+        raise RuntimeError(failure_message(result))
+    return result.final_response

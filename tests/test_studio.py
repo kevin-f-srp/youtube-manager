@@ -46,110 +46,169 @@ class StudioTests(unittest.TestCase):
 
     def test_review_anchor_source_and_invalid_time(self):
         from src.studio.context import resolve_context
+
         current, edl = self.draft()
-        self.store.save(self.pid, edl, current['revision'])
-        asset = current['assets'][0]
-        context, path = resolve_context(self.store, self.jobs, self.pid,
-            {'kind':'source', 'asset_id':asset['id'], 'time':0})
-        self.assertEqual(context['shot_ids'], ['s1'])
-        self.assertEqual(path, (self.raw / 'photo.jpg').resolve())
-        for t in [-1, float('nan'), '2', True]:
+        self.store.save(self.pid, edl, current["revision"])
+        asset = current["assets"][0]
+        context, path = resolve_context(
+            self.store,
+            self.jobs,
+            self.pid,
+            {"kind": "source", "asset_id": asset["id"], "time": 0},
+        )
+        self.assertEqual(context["shot_ids"], ["s1"])
+        self.assertEqual(path, (self.raw / "photo.jpg").resolve())
+        for t in [-1, float("nan"), "2", True]:
             with self.assertRaises(ValueError):
-                resolve_context(self.store, self.jobs, self.pid,
-                    {'kind':'source', 'asset_id':asset['id'], 'time':t})
+                resolve_context(
+                    self.store,
+                    self.jobs,
+                    self.pid,
+                    {"kind": "source", "asset_id": asset["id"], "time": t},
+                )
         with self.assertRaises(ValueError):
-            resolve_context(self.store, self.jobs, self.pid,
-                {'kind':'source', 'asset_id':'unknown', 'time':0})
+            resolve_context(
+                self.store,
+                self.jobs,
+                self.pid,
+                {"kind": "source", "asset_id": "unknown", "time": 0},
+            )
 
     def test_explanation_has_no_applicable_changes(self):
         from src.studio.store import proposal_changes, write_json
+
         current, edl = self.draft()
-        rev = self.store.save(self.pid, edl, current['revision'])
-        proposal = {'summary':'仅解释，不修改', 'shots':edl['shots']}
+        rev = self.store.save(self.pid, edl, current["revision"])
+        proposal = {"summary": "仅解释，不修改", "shots": edl["shots"]}
         self.assertEqual(proposal_changes(edl, proposal), [])
         changed = copy.deepcopy(proposal)
-        changed['shots'][0]['out'] = 2
+        changed["shots"][0]["out"] = 2
         changes = proposal_changes(edl, changed)
-        self.assertEqual(changes, [{'shot_id':'s1','field':'out','before':3,'after':2}])
-        jid = 'e' * 32
-        folder = self.store.directory(self.pid) / 'jobs' / jid
-        write_json(folder / 'job.json', {'id':jid,'state':'completed','kind':'agent','created':0})
-        write_json(folder / 'input-edl.json', edl)
-        write_json(folder / 'result.json', {'proposal':proposal,'base_revision':rev})
-        response = self.post(self.base + '/jobs/' + jid + '/apply', {})
+        self.assertEqual(
+            changes, [{"shot_id": "s1", "field": "out", "before": 3, "after": 2}]
+        )
+        jid = "e" * 32
+        folder = self.store.directory(self.pid) / "jobs" / jid
+        write_json(
+            folder / "job.json",
+            {"id": jid, "state": "completed", "kind": "agent", "created": 0},
+        )
+        write_json(folder / "input-edl.json", edl)
+        write_json(folder / "result.json", {"proposal": proposal, "base_revision": rev})
+        response = self.post(self.base + "/jobs/" + jid + "/apply", {})
         self.assertEqual(response.status_code, 400)
-        self.assertIn('没有实际修改', response.json['error'])
-        self.assertEqual(self.store.load(self.pid)['revision'], rev)
-        self.assertEqual(self.client.get(self.base + '/jobs').json[0]['result']['changes'], [])
+        self.assertIn("没有实际修改", response.json["error"])
+        self.assertEqual(self.store.load(self.pid)["revision"], rev)
+        self.assertEqual(
+            self.client.get(self.base + "/jobs").json[0]["result"]["changes"], []
+        )
 
     def test_model_auth_error_is_actionable_and_does_not_echo_key(self):
         from src.studio.harness import failure_message
         from types import SimpleNamespace
-        result = SimpleNamespace(finish_reason='error', events=[{'type':'turn/end',
-            'data':{'reason':{'kind':'error','error':{'message':
-                'OpenAI API error (401): Incorrect API key provided: private-test-secret'}}}}])
+
+        result = SimpleNamespace(
+            finish_reason="error",
+            events=[
+                {
+                    "type": "turn/end",
+                    "data": {
+                        "reason": {
+                            "kind": "error",
+                            "error": {
+                                "message": "OpenAI API error (401): Incorrect API key provided: private-test-secret"
+                            },
+                        }
+                    },
+                }
+            ],
+        )
         message = failure_message(result)
-        self.assertIn('401', message)
-        self.assertIn('兼容服务地址', message)
-        self.assertNotIn('private-test-secret', message)
+        self.assertIn("401", message)
+        self.assertIn("兼容服务地址", message)
+        self.assertNotIn("private-test-secret", message)
 
     def test_all_384_assets_fit_image_budget_without_omissions(self):
         from src.studio.worker import make_sheets
-        folder = self.root / 'sheets'
-        (folder / 'thumbs').mkdir(parents=True)
-        Image.new('RGB', (350, 280), 'red').save(folder / 'thumbs' / 'source.jpg')
-        assets = [{'id':f'a{i:04}', 'thumbnail':'source.jpg'} for i in range(384)]
-        with patch('src.studio.worker.ImageDraw.Draw') as draw:
+
+        folder = self.root / "sheets"
+        (folder / "thumbs").mkdir(parents=True)
+        Image.new("RGB", (350, 280), "red").save(folder / "thumbs" / "source.jpg")
+        assets = [{"id": f"a{i:04}", "thumbnail": "source.jpg"} for i in range(384)]
+        with patch("src.studio.worker.ImageDraw.Draw") as draw:
             images = make_sheets(folder, assets, folder)
             labels = [call.args[1] for call in draw.return_value.text.call_args_list]
-        self.assertEqual(labels, [a['id'] for a in assets])
+        self.assertEqual(labels, [a["id"] for a in assets])
         self.assertEqual(len(images), 16)
         self.assertLessEqual(len(images) + 1, 20)
         with Image.open(images[-1][1]) as image:
-            self.assertEqual(image.size, (1440,1920))
+            self.assertEqual(image.size, (1440, 1920))
 
     def test_agent_receives_located_frame(self):
         from src.studio.worker import agent, scan
         from src.studio.store import write_json
+
         current, edl = self.draft()
-        self.store.save(self.pid, edl, current['revision'])
+        self.store.save(self.pid, edl, current["revision"])
         folder = self.store.directory(self.pid)
-        job = folder / 'jobs' / ('b' * 32)
+        job = folder / "jobs" / ("b" * 32)
         job.mkdir(parents=True)
         scan(folder, job)
-        write_json(job / 'input-edl.json', edl)
-        req = {'message':'保留这个画面', 'provider':'openai', 'model':'mock',
-               'context':{'kind':'source', 'asset_id':current['assets'][0]['id'], 'time':0}}
-        with patch('src.studio.harness.propose', return_value={'summary':'保留', 'shots':edl['shots']}) as model:
+        write_json(job / "input-edl.json", edl)
+        req = {
+            "message": "保留这个画面",
+            "provider": "openai",
+            "model": "mock",
+            "context": {
+                "kind": "source",
+                "asset_id": current["assets"][0]["id"],
+                "time": 0,
+            },
+        }
+        with patch(
+            "src.studio.harness.run_agent", return_value="保留这个画面"
+        ) as model:
             agent(folder, job, req)
             args = model.call_args.args
-            self.assertIn('review_context', args[3])
-            self.assertIn('s1', args[3])
-            self.assertEqual(args[4][0][1].name, 'context-frame.jpg')
-            with Image.open(args[4][0][1]) as image:
-                self.assertEqual(image.size, (80,120))
+            self.assertIn("review_context", args[5])
+            self.assertIn("保留这个画面", args[5])
+            self.assertEqual(args[6][0][1].name, "context-frame.jpg")
+            with Image.open(args[6][0][1]) as image:
+                self.assertEqual(image.size, (80, 120))
 
     def test_cut_anchor_uses_render_snapshot_with_skip_and_speed(self):
         from src.studio.context import resolve_context, segments
         from src.studio.store import write_json
-        shot = {'id':'old-shot', 'clip':'movie', 'in':10, 'out':20,
-                'skip':[[12,14]], 'speed':2}
-        self.assertEqual(segments(shot), [(10,12),(14,20)])
-        jid = 'a' * 32
-        folder = self.store.directory(self.pid) / 'jobs' / jid
+
+        shot = {
+            "id": "old-shot",
+            "clip": "movie",
+            "in": 10,
+            "out": 20,
+            "skip": [[12, 14]],
+            "speed": 2,
+        }
+        self.assertEqual(segments(shot), [(10, 12), (14, 20)])
+        jid = "a" * 32
+        folder = self.store.directory(self.pid) / "jobs" / jid
         folder.mkdir(parents=True)
-        output = folder / 'preview.mp4'
+        output = folder / "preview.mp4"
         output.touch()
-        write_json(folder / 'job.json', {'state':'completed'})
-        write_json(folder / 'result.json', {'output':str(output), 'duration':4})
-        write_json(folder / 'input-edl.json', {'shots':[shot]})
-        context, _ = resolve_context(self.store, self.jobs, self.pid,
-            {'kind':'cut', 'job_id':jid, 'time':2})
-        self.assertEqual(context['shot_ids'], ['old-shot'])
-        self.assertEqual(context['source_time'], 16)
+        write_json(folder / "job.json", {"state": "completed"})
+        write_json(folder / "result.json", {"output": str(output), "duration": 4})
+        write_json(folder / "input-edl.json", {"shots": [shot]})
+        context, _ = resolve_context(
+            self.store, self.jobs, self.pid, {"kind": "cut", "job_id": jid, "time": 2}
+        )
+        self.assertEqual(context["shot_ids"], ["old-shot"])
+        self.assertEqual(context["source_time"], 16)
         with self.assertRaises(ValueError):
-            resolve_context(self.store, self.jobs, self.pid,
-                {'kind':'cut', 'job_id':jid, 'time':4})
+            resolve_context(
+                self.store,
+                self.jobs,
+                self.pid,
+                {"kind": "cut", "job_id": jid, "time": 4},
+            )
 
     def test_import_never_writes_source_and_revision_conflict(self):
         current, edl = self.draft()
@@ -277,6 +336,70 @@ class StudioTests(unittest.TestCase):
             400,
         )
 
+    def test_agent_messages_queue_and_cancel_without_losing_next_turn(self):
+        import subprocess, sys
+
+        original = subprocess.Popen
+        launched = []
+
+        def fake_worker(argv, **kwargs):
+            launched.append(argv[-1])
+            script = (
+                "import time; time.sleep(30)"
+                if len(launched) == 1
+                else "import json,sys,pathlib; pathlib.Path(sys.argv[1], 'result.json').write_text(json.dumps({'answer':'done'}))"
+            )
+            return original([sys.executable, "-c", script, argv[-1]], **kwargs)
+
+        with patch("src.studio.app.subprocess.Popen", side_effect=fake_worker):
+            first = self.jobs.start(self.pid, {"kind": "agent", "message": "first"})
+            second = self.jobs.start(self.pid, {"kind": "agent", "message": "second"})
+            third = self.jobs.start(self.pid, {"kind": "agent", "message": "cancel me"})
+            self.assertEqual(second["state"], "queued")
+            self.assertEqual(len(launched), 1)
+            self.jobs.cancel(self.pid, third["id"])
+            self.jobs.cancel(self.pid, first["id"])
+            for _ in range(100):
+                rows = {j["id"]: j for j in self.jobs.list(self.pid)}
+                if rows[second["id"]]["state"] == "completed":
+                    break
+                time.sleep(0.03)
+            self.assertEqual(rows[second["id"]]["state"], "completed")
+            self.assertEqual(rows[third["id"]]["state"], "cancelled")
+            self.assertEqual(len(launched), 2)
+
+    def test_scoped_tools_cannot_escape_project_and_reset_keeps_history(self):
+        from src.studio.agent_tools import execute
+        from src.studio.store import write_json
+        import sys
+
+        folder = self.store.directory(self.pid)
+        job = folder / "jobs" / ("f" * 32)
+        write_json(
+            job / "request.json",
+            {
+                "engine_root": str(Path(__file__).resolve().parents[1]),
+                "engine_python": sys.executable,
+            },
+        )
+        with self.assertRaises(ValueError):
+            execute(folder, job, "read", {"area": "engine", "path": "../../../../.env"})
+        with self.assertRaises(ValueError):
+            execute(
+                folder,
+                job,
+                "map_update",
+                {"config": "../../secrets.json", "changes": {}},
+            )
+        write_json(folder / "agent/session.json", {"session_id": "test"})
+        response = self.post(self.base + "/agent/reset", {})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse((folder / "agent/session.json").exists())
+        self.assertEqual(
+            len(list((folder / "agent").glob("session-archived-*.json"))), 1
+        )
+        self.assertEqual(self.client.get(self.base + "/agent").json["state"], "ready")
+
     def test_cancel_real_process(self):
         import subprocess, sys
 
@@ -348,7 +471,10 @@ class StudioTests(unittest.TestCase):
 
         current, edl = self.draft()
         path = self.store.directory(self.pid) / "jobs" / ("b" * 32)
-        write_json(path / "job.json", {"state": "completed", "kind": "agent"})
+        write_json(
+            path / "job.json",
+            {"state": "completed", "kind": "agent", "id": "b" * 32, "created": 0},
+        )
         write_json(
             path / "result.json",
             {

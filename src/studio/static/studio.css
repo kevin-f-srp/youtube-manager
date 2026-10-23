@@ -424,9 +424,49 @@ dialog p {
   }
 }
 
-.range-track {position:relative;height:18px;background:#303640;margin:8px 0;}
-.range-block {position:absolute;top:0;height:18px;min-width:2px;padding:0;background:#8bbd8b;border:1px solid #182019;border-radius:2px;}
-#used-ranges > button {margin:3px;font-size:12px;}
-#context-frame {width:100%;max-height:160px;object-fit:contain;}
+.range-track {
+  position: relative;
+  height: 18px;
+  background: #303640;
+  margin: 8px 0;
+}
+.range-block {
+  position: absolute;
+  top: 0;
+  height: 18px;
+  min-width: 2px;
+  padding: 0;
+  background: #8bbd8b;
+  border: 1px solid #182019;
+  border-radius: 2px;
+}
+#used-ranges > button {
+  margin: 3px;
+  font-size: 12px;
+}
+#context-frame {
+  width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
 
-.job pre {white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px;}
+.job pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.composer label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+#agent-state {
+  white-space: normal;
+}

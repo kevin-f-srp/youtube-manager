@@ -7,7 +7,9 @@ let config,
   jobSignature = "",
   projectId = "",
   showingSource = false;
-let sourceAsset = null, playbackJob = null, reviewAnchor = null;
+let sourceAsset = null,
+  playbackJob = null,
+  reviewAnchor = null;
 const chosen = new Set();
 const el = (tag, text, cls) => {
   const n = document.createElement(tag);
@@ -112,31 +114,53 @@ async function showPreview() {
 }
 function kept(s) {
   let spans = [[s.in, s.out]];
-  if (s.skip_on !== false) for (const [left, right] of s.skip || []) {
-    spans = spans.flatMap(([a,b]) => [[a, Math.min(b,left)], [Math.max(a,right),b]].filter(([x,y]) => y>x));
-  }
+  if (s.skip_on !== false)
+    for (const [left, right] of s.skip || []) {
+      spans = spans.flatMap(([a, b]) =>
+        [
+          [a, Math.min(b, left)],
+          [Math.max(a, right), b],
+        ].filter(([x, y]) => y > x),
+      );
+    }
   return spans;
 }
 function renderRanges() {
   const root = $("#used-ranges");
   root.replaceChildren();
   if (!showingSource || !sourceAsset || !current) return;
-  root.append(el("p", "当前剪辑方案选用的时间段（点击跳转；含未保存修改）", "hint"));
+  root.append(
+    el("p", "当前剪辑方案选用的时间段（点击跳转；含未保存修改）", "hint"),
+  );
   const bar = el("div", undefined, "range-track");
   root.append(bar);
   let count = 0;
   for (const shot of current.edl.shots) {
-    if (shot.enabled === false || ![sourceAsset.name, sourceAsset.name.replace(/\.[^.]+$/, "")].includes(shot.clip)) continue;
-    for (const [a,b] of kept(shot)) {
+    if (
+      shot.enabled === false ||
+      ![sourceAsset.name, sourceAsset.name.replace(/\.[^.]+$/, "")].includes(
+        shot.clip,
+      )
+    )
+      continue;
+    for (const [a, b] of kept(shot)) {
       count++;
       const label = `${shot.id} · ${a.toFixed(1)}–${b.toFixed(1)} 秒`;
-      const jump = () => { $("#preview").currentTime = a; $("#preview").pause(); };
-      const button = el("button", label); button.onclick = jump; root.append(button);
+      const jump = () => {
+        $("#preview").currentTime = a;
+        $("#preview").pause();
+      };
+      const button = el("button", label);
+      button.onclick = jump;
+      root.append(button);
       if (sourceAsset.duration) {
         const block = el("button", undefined, "range-block");
-        block.style.left = `${100*a/sourceAsset.duration}%`;
-        block.style.width = `${100*(b-a)/sourceAsset.duration}%`;
-        block.title = label; block.setAttribute("aria-label", label); block.onclick = jump; bar.append(block);
+        block.style.left = `${(100 * a) / sourceAsset.duration}%`;
+        block.style.width = `${(100 * (b - a)) / sourceAsset.duration}%`;
+        block.title = label;
+        block.setAttribute("aria-label", label);
+        block.onclick = jump;
+        bar.append(block);
       }
     }
   }
@@ -147,26 +171,35 @@ function clearAnchor() {
   reviewAnchor = null;
   $("#context").textContent = "发送时自动附带播放器当前画面与时间";
   $("#context-frame").hidden = true;
+  $("#clear-context").hidden = true;
 }
 function anchorFrame(pause = true) {
   if (!current) throw Error("请先选择项目");
   const video = $("#preview");
   const photo = showingSource && sourceAsset?.kind === "photo";
-  if (!photo && (video.readyState < 2 || video.seeking)) throw Error("请等待画面加载后再定位");
+  if (!photo && (video.readyState < 2 || video.seeking))
+    throw Error("请等待画面加载后再定位");
   if (pause) video.pause();
   reviewAnchor = showingSource
-    ? {kind:"source", asset_id:sourceAsset.id, time:photo ? 0 : video.currentTime}
-    : {kind:"cut", job_id:playbackJob, time:video.currentTime};
-  $("#context").textContent = `已定位：${showingSource ? "原素材 · " + sourceAsset.name : "成片"} · ${reviewAnchor.time.toFixed(2)} 秒`;
+    ? {
+        kind: "source",
+        asset_id: sourceAsset.id,
+        time: photo ? 0 : video.currentTime,
+      }
+    : { kind: "cut", job_id: playbackJob, time: video.currentTime };
+  $("#context").textContent =
+    `已定位：${showingSource ? "原素材 · " + sourceAsset.name : "成片"} · ${reviewAnchor.time.toFixed(2)} 秒`;
   const image = $("#context-frame");
   if (photo) image.src = video.poster;
   else {
     const canvas = document.createElement("canvas");
-    canvas.width = 480; canvas.height = 480*video.videoHeight/video.videoWidth;
-    canvas.getContext("2d").drawImage(video,0,0,canvas.width,canvas.height);
-    image.src = canvas.toDataURL("image/jpeg",.8);
+    canvas.width = 480;
+    canvas.height = (480 * video.videoHeight) / video.videoWidth;
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    image.src = canvas.toDataURL("image/jpeg", 0.8);
   }
   image.hidden = false;
+  $("#clear-context").hidden = false;
   if (pause) $("#message").focus();
 }
 function renderAssets() {
@@ -366,6 +399,20 @@ async function poll() {
   const id = projectId,
     js = await api(base() + "/jobs");
   if (id !== projectId) return;
+  const status = await api(base() + "/agent");
+  if (id !== projectId) return;
+  $("#agent-state").textContent =
+    status.state === "working"
+      ? `Agent 正在工作${status.queued ? " · " + status.queued + " 条待处理" : ""}`
+      : "Agent 在线 · 可发送消息";
+  const freshProject = await api(base());
+  if (id !== projectId) return;
+  if (!dirty && freshProject.revision !== current.revision) {
+    current = freshProject;
+    $("#version").textContent = "剪辑方案版本 " + current.revision.slice(0, 8);
+    renderShots();
+    renderRanges();
+  }
   const sig = JSON.stringify(js);
   if (sig === jobSignature) return;
   jobSignature = sig;
@@ -373,19 +420,27 @@ async function poll() {
   const root = $("#jobs");
   root.replaceChildren();
   const chat = $("#chat");
+  const previousScroll = chat.scrollTop;
+  const followChat =
+    chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
   chat.replaceChildren();
   for (const j of [...js].reverse()) {
     if (j.message) {
-      const prefix = j.context ? `[${j.context.kind === "source" ? "原素材 · " + j.context.name : "成片"} ${j.context.time.toFixed(2)} 秒]\n` : "";
+      const prefix = j.context
+        ? `[${j.context.kind === "source" ? "原素材 · " + j.context.name : "成片"} ${j.context.time.toFixed(2)} 秒]\n`
+        : "";
       chat.append(el("div", prefix + j.message, "bubble user"));
     }
+    if (j.result?.answer) chat.append(el("div", j.result.answer, "bubble"));
     if (j.result?.proposal)
       chat.append(el("div", j.result.proposal.summary, "bubble"));
   }
+  chat.scrollTop = followChat ? chat.scrollHeight : previousScroll;
   for (const j of js) {
     const box = el("div", undefined, "job"),
       states = {
         running: "处理中",
+        queued: "排队中",
         completed: "完成",
         failed: "失败",
         cancelled: "已取消",
@@ -407,7 +462,7 @@ async function poll() {
       box.append(
         el("p", typeof j.error === "string" ? j.error : j.error.error),
       );
-    if (j.state === "running") {
+    if (["running", "queued"].includes(j.state)) {
       const b = el("button", "取消");
       b.onclick = () =>
         safe(async () => {
@@ -419,13 +474,31 @@ async function poll() {
     if (j.result?.proposal && !j.result.changes?.length) {
       box.append(el("p", "仅回答问题，没有修改剪辑方案，无需应用。"));
     }
-    if (j.result?.changes?.length) {
+    if (j.result?.proposal && j.result?.changes?.length) {
       const details = el("details");
-      details.append(el("summary", `查看 ${j.result.changes.length} 项实际修改`));
-      const labels = {in:"原片起点", out:"原片终点", speed:"播放倍速", enabled:"启用", fit:"画幅", zoom:"缩放", subs:"字幕", note:"镜头说明"};
+      details.append(
+        el("summary", `查看 ${j.result.changes.length} 项实际修改`),
+      );
+      const labels = {
+        in: "原片起点",
+        out: "原片终点",
+        speed: "播放倍速",
+        enabled: "启用",
+        fit: "画幅",
+        zoom: "缩放",
+        subs: "字幕",
+        note: "镜头说明",
+      };
       for (const c of j.result.changes) {
-        details.append(el("strong", `${c.shot_id} · ${labels[c.field] || c.field}`));
-        details.append(el("pre", `修改前：${JSON.stringify(c.before, null, 2)}\n修改后：${JSON.stringify(c.after, null, 2)}`));
+        details.append(
+          el("strong", `${c.shot_id} · ${labels[c.field] || c.field}`),
+        );
+        details.append(
+          el(
+            "pre",
+            `修改前：${JSON.stringify(c.before, null, 2)}\n修改后：${JSON.stringify(c.after, null, 2)}`,
+          ),
+        );
       }
       box.append(details);
       const b = el("button", "应用建议");
@@ -437,6 +510,32 @@ async function poll() {
           toast("建议已应用，可以生成预览");
         });
       box.append(b);
+    }
+    if (j.result?.answer)
+      box.append(el("p", j.result.applied ? "修改已保存到项目副本" : "已回复"));
+    if (j.events?.length) {
+      const details = el("details");
+      details.append(el("summary", "执行过程"));
+      for (const event of j.events)
+        if (event.type === "tool/call" || event.type === "tool/result")
+          details.append(
+            el(
+              "p",
+              `${event.type === "tool/call" ? "调用" : event.error ? "失败" : "完成"} ${event.label || event.action || event.tool || "剪辑工具"}`,
+            ),
+          );
+      box.append(details);
+    }
+    for (const artifact of j.artifacts || []) {
+      const a = el("a", artifact.applied ? "查看已生成的素材" : "查看画面预览");
+      a.href =
+        "/api" +
+        base() +
+        "/artifacts/" +
+        artifact.path.replace(/^generated\//, "");
+      a.target = "_blank";
+      a.rel = "noopener";
+      box.append(a);
     }
     if (j.state === "completed" && j.result?.output) {
       box.append(
@@ -450,7 +549,9 @@ async function poll() {
       box.append(a);
       const b = el("button", "播放");
       b.onclick = () => {
-        showingSource = false; sourceAsset = null; playbackJob = j.id;
+        showingSource = false;
+        sourceAsset = null;
+        playbackJob = j.id;
         renderRanges();
         $("#preview").poster = "";
         $("#preview").src = "/api" + base() + `/jobs/${j.id}/output`;
@@ -502,10 +603,17 @@ $("#render-preview").onclick = () =>
 $("#render-final").onclick = () =>
   safe(() => start({ kind: "render", mode: "final" }));
 $("#show-preview").onclick = () => safe(showPreview);
-$("#anchor-frame").onclick = () => safe(() => { $("#attach-frame").checked = true; anchorFrame(); });
+$("#anchor-frame").onclick = () =>
+  safe(() => {
+    $("#attach-frame").checked = true;
+    anchorFrame();
+  });
 $("#clear-context").onclick = clearAnchor;
 $("#base-url").oninput = () => {
-  localStorage.setItem("studio-base-url-" + $("#provider").value, $("#base-url").value.trim());
+  localStorage.setItem(
+    "studio-base-url-" + $("#provider").value,
+    $("#base-url").value.trim(),
+  );
 };
 $("#provider").onchange = () => {
   credentialStatus();
@@ -567,8 +675,21 @@ safe(async () => {
     $("#projects").value = last;
     await loadProject(last);
   }
-  setInterval(() => safe(poll), 2000);
+  setInterval(
+    () =>
+      poll().catch(() => {
+        $("#agent-state").textContent = "Agent 服务未连接";
+      }),
+    2000,
+  );
 });
+
+$("#new-session").onclick = () =>
+  safe(async () => {
+    if (!current) throw Error("请先选择项目");
+    await api(base() + "/agent/reset", "POST", {});
+    toast("已新建对话，工程和旧任务记录保留");
+  });
 
 $("#set-key").onclick = () =>
   safe(async () => {

@@ -15,7 +15,14 @@ from urllib.parse import urlparse
 import uuid
 
 from flask import Flask, abort, jsonify, request, send_file
-from .store import Store, Conflict, read_json, write_json, apply_proposal, proposal_changes
+from .store import (
+    Store,
+    Conflict,
+    read_json,
+    write_json,
+    apply_proposal,
+    proposal_changes,
+)
 from .harness import PROVIDERS
 from .context import resolve_context
 
@@ -30,6 +37,7 @@ class Jobs:
             engine_python,
         )
         self.processes = {}
+        self.closing = False
         self.lock = threading.RLock()
         # Do not pretend jobs survive a server restart. A fresh server owns no old processes.
         for path in store.root.glob("projects/*/jobs/*/job.json"):
@@ -43,12 +51,18 @@ class Jobs:
             result = []
             for file in self.store.directory(pid).glob("jobs/*/job.json"):
                 data = read_json(file)
-                for extra in ("result", "error", "progress"):
+                for extra in ("result", "error", "progress", "events", "artifacts"):
                     p = file.parent / (extra + ".json")
                     if p.exists():
                         data[extra] = read_json(p)
-                if data.get("result", {}).get("proposal"):
-                    data["result"]["changes"] = proposal_changes(read_json(file.parent / "input-edl.json"), data["result"]["proposal"])
+                if (
+                    data.get("result", {}).get("proposal")
+                    and (file.parent / "input-edl.json").exists()
+                ):
+                    data["result"]["changes"] = proposal_changes(
+                        read_json(file.parent / "input-edl.json"),
+                        data["result"]["proposal"],
+                    )
                 location = file.parent / "render-location.json"
                 if data["state"] == "running" and location.exists():
                     status = Path(read_json(location)["edit"]) / "render_status.json"
@@ -61,10 +75,11 @@ class Jobs:
 
     def start(self, pid, payload):
         with self.lock:
-            if any(
+            active = any(
                 j["state"] in ("queued", "running") or j["id"] in self.processes
                 for j in self.list(pid)
-            ):
+            )
+            if active and payload["kind"] != "agent":
                 raise Conflict("该项目已有任务运行，请等待或取消后再提交")
             jid = uuid.uuid4().hex
             folder = self.store.directory(pid)
@@ -78,38 +93,38 @@ class Jobs:
             meta = {
                 "id": jid,
                 "kind": payload["kind"],
-                "state": "running",
+                "state": "queued" if active else "running",
                 "created": time.time(),
                 "base_revision": current["revision"],
                 "message": payload.get("message", ""),
                 "context": payload.get("context"),
             }
             write_json(job / "job.json", meta)
-            try:
-                log = open(job / "worker.log", "wb")
-                try:
-                    proc = subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-m",
-                            "src.studio.worker",
-                            str(folder),
-                            str(job),
-                        ],
-                        cwd=REPO,
-                        stdout=log,
-                        stderr=log,
-                        start_new_session=True,
-                    )
-                finally:
-                    log.close()
-            except Exception:
-                meta.update(state="failed", error="无法启动任务进程")
-                write_json(job / "job.json", meta)
-                raise
-            self.processes[jid] = proc
-            threading.Thread(target=self._wait, args=(proc, job), daemon=True).start()
+            if not active:
+                self._launch(folder, job)
             return meta
+
+    def _launch(self, folder, job):
+        meta = read_json(job / "job.json")
+        current = self.store.load(folder.name)
+        write_json(job / "input-edl.json", current["edl"])
+        meta.update(state="running", base_revision=current["revision"])
+        write_json(job / "job.json", meta)
+        try:
+            with open(job / "worker.log", "wb") as log:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "src.studio.worker", str(folder), str(job)],
+                    cwd=REPO,
+                    stdout=log,
+                    stderr=log,
+                    start_new_session=True,
+                )
+        except Exception:
+            meta.update(state="failed", error="无法启动任务进程")
+            write_json(job / "job.json", meta)
+            raise
+        self.processes[meta["id"]] = proc
+        threading.Thread(target=self._wait, args=(proc, job), daemon=True).start()
 
     def _wait(self, proc, job):
         code = proc.wait()
@@ -126,26 +141,47 @@ class Jobs:
                     finished=time.time(),
                 )
                 write_json(job / "job.json", meta)
+            if meta["state"] == "cancelled":
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             self.processes.pop(meta["id"], None)
+            if not self.closing:
+                pending = [
+                    j
+                    for j in self.list(job.parent.parent.name)
+                    if j["state"] == "queued"
+                ]
+                if pending:
+                    next_job = min(pending, key=lambda j: j["created"])
+                    self._launch(job.parent.parent, job.parent / next_job["id"])
 
     def cancel(self, pid, jid):
         with self.lock:
             job = self.jobdir(pid, jid)
+            meta = read_json(job / "job.json")
+            if meta["state"] == "queued":
+                meta["state"] = "cancelled"
+                write_json(job / "job.json", meta)
+                return {"ok": True}
             proc = self.processes.get(jid)
             if proc and proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
+                os.kill(proc.pid, signal.SIGTERM)
                 meta = read_json(job / "job.json")
                 meta["state"] = "cancelled"
                 write_json(job / "job.json", meta)
 
                 def reap():
                     try:
-                        proc.wait(timeout=5)
+                        proc.wait(timeout=12)
                     except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(proc.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
+                        pass
+                    # Clean up any tool/encoder descendants left after graceful SDK shutdown.
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
                 threading.Thread(target=reap, daemon=True).start()
             return {"ok": True}
@@ -160,12 +196,26 @@ class Jobs:
 
     def close(self):
         with self.lock:
-            for proc in list(self.processes.values()):
+            self.closing = True
+            for jid, proc in list(self.processes.items()):
                 if proc.poll() is None:
-                    try:
-                        os.killpg(proc.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+                    for folder in self.store.root.glob("projects/*"):
+                        if (folder / "jobs" / jid / "job.json").exists():
+                            try:
+                                self.cancel(folder.name, jid)
+                            except ProcessLookupError:
+                                pass
+                            break
+            remaining = list(self.processes.values())
+        # Let session logs settle before releasing the service's data-directory lock.
+        for proc in remaining:
+            try:
+                proc.wait(timeout=12)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
@@ -270,10 +320,8 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
         if not isinstance(data, dict) or "edl" not in data:
             raise ValueError("缺少剪辑工程")
         with jobs.lock:
-            if any(
-                j["state"] == "running" and j["kind"] == "scan" for j in jobs.list(pid)
-            ):
-                raise Conflict("素材整理完成后才能修改工程")
+            if any(j["state"] in ("queued", "running") for j in jobs.list(pid)):
+                raise Conflict("请等待当前任务完成后再手动修改工程")
             rev = store.save(pid, data["edl"], data.get("revision"))
         return jsonify(revision=rev)
 
@@ -338,7 +386,12 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
 
     @app.post("/api/projects/<pid>/jobs/<jid>/apply")
     def apply(pid, jid):
-        with store.lock:
+        with jobs.lock, store.lock:
+            if any(
+                (j["state"] in ("running", "queued") or j["id"] in jobs.processes)
+                for j in jobs.list(pid)
+            ):
+                raise Conflict("请等待 Agent 完成后再应用旧建议")
             path = jobs.jobdir(pid, jid)
             if read_json(path / "job.json")["state"] != "completed":
                 raise Conflict("建议尚未完成")
@@ -348,7 +401,9 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
             current = store.load(pid)
             if current["revision"] != result["base_revision"]:
                 raise Conflict("工程已经变化，请重新生成建议")
-            if not proposal_changes(read_json(path / "input-edl.json"), result["proposal"]):
+            if not proposal_changes(
+                read_json(path / "input-edl.json"), result["proposal"]
+            ):
                 raise ValueError("这次回复没有实际修改，无需应用")
             edl = apply_proposal(current, result["proposal"])
             rev = store.save(pid, edl, result["base_revision"])
@@ -369,11 +424,66 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
             target, conditional=True, as_attachment=request.args.get("download") == "1"
         )
 
+    @app.get("/api/projects/<pid>/agent")
+    def agent_status(pid):
+        folder = store.directory(pid)
+        state = folder / "agent/session.json"
+        tasks = jobs.list(pid)
+        active = [
+            j for j in tasks if j["state"] == "running" or j["id"] in jobs.processes
+        ]
+        return jsonify(
+            online=True,
+            state="working" if active else "ready",
+            queued=sum(j["state"] == "queued" for j in tasks),
+            session=read_json(state) if state.exists() else None,
+        )
+
+    @app.post("/api/projects/<pid>/agent/reset")
+    def agent_reset(pid):
+        with jobs.lock:
+            if any(
+                (j["state"] in ("running", "queued") or j["id"] in jobs.processes)
+                for j in jobs.list(pid)
+            ):
+                raise Conflict("请先等待或取消当前任务")
+            folder = store.directory(pid)
+            state = folder / "agent/session.json"
+            if state.exists():
+                archive = (
+                    folder
+                    / "agent"
+                    / ("session-archived-" + uuid.uuid4().hex + ".json")
+                )
+                state.rename(archive)
+            write_json(folder / "agent/session-reset.json", {"created": time.time()})
+        return jsonify(ok=True)
+
+    @app.get("/api/projects/<pid>/artifacts/<path:name>")
+    def artifact(pid, name):
+        folder = store.directory(pid)
+        target = (folder / "generated" / name).resolve()
+        if not target.is_relative_to(
+            (folder / "generated").resolve()
+        ) or target.suffix.lower() not in (".jpg", ".png", ".mp4"):
+            abort(404)
+        return send_file(target, conditional=True)
+
     @app.get("/api/projects/<pid>/playback")
     def playback(pid):
-        finished = [j for j in jobs.list(pid) if j["state"] == "completed" and j.get("result", {}).get("mode") == "preview"]
+        finished = [
+            j
+            for j in jobs.list(pid)
+            if j["state"] == "completed"
+            and j.get("result", {}).get("mode") == "preview"
+        ]
         jid = finished[0]["id"] if finished else None
-        return jsonify(job_id=jid, url=f"/api/projects/{pid}/jobs/{jid}/output" if jid else f"/api/projects/{pid}/preview")
+        return jsonify(
+            job_id=jid,
+            url=f"/api/projects/{pid}/jobs/{jid}/output"
+            if jid
+            else f"/api/projects/{pid}/preview",
+        )
 
     @app.get("/api/projects/<pid>/preview")
     def preview(pid):

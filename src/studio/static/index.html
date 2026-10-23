@@ -71,7 +71,7 @@
       <aside class="assistant">
         <div class="section-title">
           <h2>剪辑助手</h2>
-          <span class="pill">Harness</span>
+          <span id="agent-state" class="pill">Agent 未连接</span>
         </div>
         <label
           >模型服务<select id="provider">
@@ -83,12 +83,18 @@
         /></label>
         <details>
           <summary>连接配置</summary>
+          <p class="hint">
+            每个项目保持独立会话。执行中发送的补充消息会排队，当前任务完成后继续处理。
+          </p>
+          <button id="new-session">新建对话（保留工程）</button>
           <label
             >兼容服务地址（可选）<input
               id="base-url"
               placeholder="留空使用官方服务"
           /></label>
-          <p class="hint">接口地址按模型服务保存在当前浏览器中，刷新后自动恢复。</p>
+          <p class="hint">
+            接口地址按模型服务保存在当前浏览器中，刷新后自动恢复。
+          </p>
           <p id="credentials" class="hint"></p>
           <label
             >API 密钥（仅保存在本次服务内存中）<input
@@ -103,14 +109,22 @@
         </details>
         <div id="chat" class="chat">
           <p class="empty">
-            告诉我这段旅程发生了什么，或指出想调整的画面。建议会列出具体修改，应用后才会改变工程。
+            告诉我这段旅程发生了什么，或指出想调整的画面。Agent
+            会实际执行你要求的修改并检查结果；咨询问题会直接回答。
           </p>
         </div>
         <div class="composer">
           <img id="context-frame" hidden alt="已定位的画面" />
-          <label><input id="attach-frame" type="checkbox" checked />发送时附带当前画面</label>
-          <button id="clear-context">收起画面预览</button>
-          <span id="context" class="hint">发送时自动附带播放器当前画面与时间</span
+          <label
+            ><input
+              id="attach-frame"
+              type="checkbox"
+              checked
+            />发送时附带当前画面</label
+          >
+          <button id="clear-context" hidden>收起画面预览</button>
+          <span id="context" class="hint"
+            >发送时自动附带播放器当前画面与时间</span
           ><textarea
             id="message"
             rows="4"
