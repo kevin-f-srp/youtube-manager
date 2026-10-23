@@ -195,7 +195,7 @@ class StudioTests(unittest.TestCase):
         output = folder / "preview.mp4"
         output.touch()
         write_json(folder / "job.json", {"state": "completed"})
-        write_json(folder / "result.json", {"output": str(output), "duration": 4})
+        write_json(folder / "result.json", {"output": str(output), "duration": "4.000"})
         write_json(folder / "input-edl.json", {"shots": [shot]})
         context, _ = resolve_context(
             self.store, self.jobs, self.pid, {"kind": "cut", "job_id": jid, "time": 2}

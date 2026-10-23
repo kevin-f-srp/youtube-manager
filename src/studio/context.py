@@ -62,7 +62,7 @@ def resolve_context(store, jobs, pid, anchor):
             target = Path(result["output"]).resolve()
             if not target.is_relative_to(folder.resolve()):
                 raise ValueError("播放文件路径无效")
-            if t >= result["duration"]:
+            if t >= float(result["duration"]):
                 raise ValueError("画面时间超出成片时长")
             edl = read_json(
                 folder
