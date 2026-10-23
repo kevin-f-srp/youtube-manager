@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>行记 · 视频工作台</title>
+    <link rel="stylesheet" href="/static/studio.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">◈</span>
+        <div>行记 <small>视频工作台 · 本地原型</small></div>
+      </div>
+      <div id="connection">连接中</div>
+    </header>
+    <main>
+      <aside class="library">
+        <div class="section-title">
+          <h2>项目</h2>
+          <button id="import-open">＋ 导入</button>
+        </div>
+        <select id="projects" aria-label="选择项目">
+          <option value="">选择项目</option>
+        </select>
+        <div class="section-title">
+          <h2>素材库</h2>
+          <span id="asset-count">0</span>
+        </div>
+        <p class="hint">勾选素材可限定 AI 查看范围；点击缩略图查看原片。</p>
+        <div id="assets" class="assets">
+          <p class="empty">导入一个素材目录，开始新的行记。</p>
+        </div>
+      </aside>
+      <section class="workspace">
+        <div class="section-title">
+          <div>
+            <div class="eyebrow">PROJECT / EDIT</div>
+            <h1 id="project-name">让旅程成为故事</h1>
+          </div>
+          <span id="version" class="pill">尚未选择项目</span>
+        </div>
+        <div class="player">
+          <video id="preview" controls preload="metadata"></video>
+          <div id="welcome">
+            <span>◈</span>
+            <h2>从素材到成片，在这里完成</h2>
+            <p>浏览素材、描述想法、审阅修改，再导出。</p>
+          </div>
+        </div>
+        <div class="playerbar">
+          <span id="preview-label">未生成预览</span
+          ><button id="show-preview">返回成片</button>
+        </div>
+        <div id="used-ranges"></div>
+        <button id="anchor-frame">暂停并查看交流画面</button>
+        <div class="toolbar">
+          <button id="scan">整理素材</button
+          ><button id="render-preview" class="primary">生成预览</button
+          ><button id="render-final">导出 4K</button><span id="dirty"></span>
+        </div>
+        <div class="section-title">
+          <h2>镜头与字幕</h2>
+          <button id="save">保存修改</button>
+        </div>
+        <div class="timeline-help">
+          选择镜头定位成片。字幕时间使用原素材秒数；修改先保存，再生成新预览。
+        </div>
+        <div id="shots" class="shots"></div>
+      </section>
+      <aside class="assistant">
+        <div class="section-title">
+          <h2>剪辑助手</h2>
+          <span id="agent-state" class="pill">Agent 未连接</span>
+        </div>
+        <label
+          >模型服务<select id="provider">
+            <option value="openai">OpenAI · GPT</option>
+            <option value="anthropic">Anthropic · Claude</option>
+          </select></label
+        ><label
+          >模型名称<input id="model" placeholder="填写账号可用的模型 ID"
+        /></label>
+        <details>
+          <summary>连接配置</summary>
+          <p class="hint">
+            每个项目保持独立会话。执行中发送的补充消息会排队，当前任务完成后继续处理。
+          </p>
+          <button id="new-session">新建对话（保留工程）</button>
+          <label
+            >兼容服务地址（可选）<input
+              id="base-url"
+              placeholder="留空使用官方服务"
+          /></label>
+          <p class="hint">
+            接口地址按模型服务保存在当前浏览器中，刷新后自动恢复。
+          </p>
+          <p id="credentials" class="hint"></p>
+          <label
+            >API 密钥（仅保存在本次服务内存中）<input
+              id="api-key"
+              type="password"
+              autocomplete="off"
+              placeholder="不会写入项目文件" /></label
+          ><button id="set-key">配置密钥</button>
+          <p class="hint">
+            仅将请求、工程信息、定位画面和素材缩略图发送给所选模型服务。密钥不写入项目文件。
+          </p>
+        </details>
+        <div id="chat" class="chat">
+          <p class="empty">
+            告诉我这段旅程发生了什么，或指出想调整的画面。Agent
+            会实际执行你要求的修改并检查结果；咨询问题会直接回答。
+          </p>
+        </div>
+        <div class="composer">
+          <img id="context-frame" hidden alt="已定位的画面" />
+          <label
+            ><input
+              id="attach-frame"
+              type="checkbox"
+              checked
+            />发送时附带当前画面</label
+          >
+          <button id="clear-context" hidden>收起画面预览</button>
+          <span id="context" class="hint"
+            >发送时自动附带播放器当前画面与时间</span
+          ><textarea
+            id="message"
+            rows="4"
+            placeholder="例如：开场用登顶画面，人物照片保留完整山体，节奏舒缓一些。"
+          ></textarea
+          ><button id="send" class="primary">发送</button>
+          <p id="send-status" role="status" aria-live="polite">尚未发送消息</p>
+          <p id="send-error" role="alert" hidden></p>
+        </div>
+        <div class="section-title">
+          <h2>处理任务</h2>
+          <span id="task-count"></span>
+        </div>
+        <div id="jobs" class="jobs"></div>
+      </aside>
+    </main>
+    <dialog id="import-dialog">
+      <form id="import-form">
+        <h2>导入素材或现有项目</h2>
+        <p>
+          输入这台电脑上的目录。工程保存为工作台副本，原始素材和原工程保持不变。
+        </p>
+        <label
+          >目录路径<input
+            id="source-path"
+            required
+            placeholder="/Users/你的名字/Movies/旅程"
+        /></label>
+        <div class="dialog-actions">
+          <button type="button" id="import-cancel">取消</button
+          ><button type="submit" class="primary">导入并整理</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" role="status" hidden></div>
+    <script src="/static/studio.js"></script>
+  </body>
+</html>

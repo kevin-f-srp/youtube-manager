@@ -76,3 +76,6 @@ asrvenv/
 
 # third-party tool venvs/binaries (scouting 2026-10-08)
 .tools/
+
+# Local video studio environment
+.venv-studio/
