@@ -61,6 +61,17 @@ class StudioTests(unittest.TestCase):
             resolve_context(self.store, self.jobs, self.pid,
                 {'kind':'source', 'asset_id':'unknown', 'time':0})
 
+    def test_model_auth_error_is_actionable_and_does_not_echo_key(self):
+        from src.studio.harness import failure_message
+        from types import SimpleNamespace
+        result = SimpleNamespace(finish_reason='error', events=[{'type':'turn/end',
+            'data':{'reason':{'kind':'error','error':{'message':
+                'OpenAI API error (401): Incorrect API key provided: private-test-secret'}}}}])
+        message = failure_message(result)
+        self.assertIn('401', message)
+        self.assertIn('兼容服务地址', message)
+        self.assertNotIn('private-test-secret', message)
+
     def test_all_384_assets_fit_image_budget_without_omissions(self):
         from src.studio.worker import make_sheets
         folder = self.root / 'sheets'

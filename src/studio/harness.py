@@ -42,6 +42,29 @@ def patch_for(provider, model, base_url=None):
     return rows  # JSON is also valid YAML; no interpolation of user strings.
 
 
+def failure_message(result):
+    """Classify provider failures without exposing echoed credentials or response bodies."""
+    reason = {}
+    for event in reversed(result.events):
+        if event.get("type") == "turn/end":
+            reason = event.get("data", {}).get("reason", {})
+            break
+    error = reason.get("error", {})
+    message = str(error.get("message", "")) if isinstance(error, dict) else ""
+    lower = message.lower()
+    if "401" in lower or "invalid_api_key" in lower or "authentication" in lower:
+        return "模型服务认证失败（401）：请核对 API 密钥与兼容服务地址是否属于同一服务；已配置不代表验证通过。"
+    if "429" in lower or "rate_limit" in lower:
+        return "模型服务拒绝请求（429）：请检查账户额度或请求频率。"
+    if "model_not_found" in lower or "404" in lower:
+        return "模型或接口不存在（404）：请核对模型名称、访问权限及兼容服务地址。"
+    if "403" in lower:
+        return "模型服务拒绝访问（403）：请检查账户权限与服务限制。"
+    if "timeout" in lower or "timed out" in lower:
+        return "连接模型服务超时，请检查服务地址与网络后重试。"
+    return f"模型任务未完成（{result.finish_reason}）：请检查模型名称、服务地址及服务状态。"
+
+
 def propose(home, provider, model, prompt, images=(), base_url=None):
     from deepseek_harness import DeepSeekHarness
 
@@ -83,7 +106,7 @@ def propose(home, provider, model, prompt, images=(), base_url=None):
     ) as harness:
         result = harness.run(content)
     if result.finish_reason != "completed":
-        raise RuntimeError(f"模型任务未完成：{result.finish_reason}")
+        raise RuntimeError(failure_message(result))
     answer = result.final_response.strip()
     if answer.startswith("```"):
         answer = answer.split("\n", 1)[1].rsplit("```", 1)[0]

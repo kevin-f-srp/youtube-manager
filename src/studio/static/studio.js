@@ -62,7 +62,7 @@ function timeAt(id) {
 function credentialStatus() {
   const p = config.providers.find((p) => p.id === $("#provider").value);
   $("#credentials").textContent =
-    `${p.env}：${p.configured ? "已配置" : "尚未配置，可在下方输入密钥或设置服务环境变量"}。`;
+    `${p.env}：${p.configured ? "已填写（尚未验证可用性）" : "尚未配置，可在下方输入密钥或设置服务环境变量"}。`;
 }
 async function refreshProjects(select) {
   const ps = await api("/projects");
