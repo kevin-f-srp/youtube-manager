@@ -109,6 +109,7 @@ async function showPreview() {
   const pid = projectId;
   const playback = await api(base() + "/playback");
   if (pid !== projectId) return;
+  $("#preview").onloadedmetadata = null;
   showingSource = false;
   sourceAsset = null;
   playbackJob = playback.job_id;
@@ -139,6 +140,41 @@ function renderRanges() {
   );
   const bar = el("div", undefined, "range-track");
   root.append(bar);
+  const selected = current.edl.shots.find((s) => s.id === selectedShot);
+  if (
+    sourceAsset.kind === "video" &&
+    selected &&
+    shotAsset(selected)?.id === sourceAsset.id
+  ) {
+    root.append(
+      el(
+        "p",
+        `正在对照镜头 ${selected.id}；可播放整段原片，再调整取用范围。`,
+        "hint",
+      ),
+    );
+    for (const [key, label] of [
+      ["in", "将当前播放位置设为起点"],
+      ["out", "将当前播放位置设为终点"],
+    ]) {
+      const button = el("button", label);
+      button.onclick = () => {
+        const time = Number($("#preview").currentTime.toFixed(3));
+        if (!Number.isFinite($("#preview").duration))
+          return toast("请等待原片加载完成");
+        if (
+          (key === "in" && time >= selected.out) ||
+          (key === "out" && time <= selected.in)
+        )
+          return toast("起点必须早于终点，请先调整另一端");
+        selected[key] = time;
+        mark();
+        renderShots();
+        toast("取用范围已调整；保存后生成预览即可查看效果");
+      };
+      root.append(button);
+    }
+  }
   let count = 0;
   for (const shot of current.edl.shots) {
     if (
@@ -207,6 +243,38 @@ function anchorFrame(pause = true) {
   $("#clear-context").hidden = false;
   if (pause) $("#message").focus();
 }
+function openSource(a, shot = null) {
+  showingSource = true;
+  sourceAsset = a;
+  playbackJob = null;
+  if (shot) selectedShot = shot.id;
+  const player = $("#preview");
+  player.pause();
+  player.onloadedmetadata = null;
+  $("#welcome").hidden = true;
+  if (a.kind === "video") {
+    player.poster = "";
+    player.onloadedmetadata = () => {
+      player.currentTime = shot ? (kept(shot)[0]?.[0] ?? shot.in) : 0;
+      player.onloadedmetadata = null;
+    };
+    player.src = "/api" + base() + `/assets/${a.id}/original`;
+  } else {
+    player.removeAttribute("src");
+    player.load();
+    player.poster = "/api" + base() + `/assets/${a.id}/original`;
+  }
+  $("#preview-label").textContent = "原素材 · " + a.name;
+  clearAnchor();
+  renderRanges();
+  renderShots();
+  player.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function shotAsset(shot) {
+  return current.assets.find((a) =>
+    [a.name, a.name.replace(/\.[^.]+$/, "")].includes(shot.clip),
+  );
+}
 function renderAssets() {
   $("#asset-count").textContent = current.assets.length;
   const root = $("#assets");
@@ -225,22 +293,7 @@ function renderAssets() {
     img.alt = a.name;
     img.loading = "lazy";
     if (a.thumbnail) img.src = "/api" + base() + `/assets/${a.id}/thumbnail`;
-    img.onclick = () => {
-      showingSource = true;
-      sourceAsset = a;
-      playbackJob = null;
-      renderRanges();
-      $("#welcome").hidden = true;
-      if (a.kind === "video") {
-        $("#preview").src = "/api" + base() + `/assets/${a.id}/original`;
-        $("#preview").poster = "";
-      } else {
-        $("#preview").removeAttribute("src");
-        $("#preview").load();
-        $("#preview").poster = "/api" + base() + `/assets/${a.id}/original`;
-      }
-      $("#preview-label").textContent = "原素材 · " + a.name;
-    };
+    img.onclick = () => openSource(a);
     const add = el("button", "＋");
     add.title = "加入镜头列表";
     add.onclick = () => {
@@ -324,6 +377,47 @@ function renderShots() {
       head.append(b);
     }
     row.append(head);
+    const asset = shotAsset(s);
+    if (asset) {
+      const source = el("div", undefined, "shot-source");
+      const open = el("button", undefined, "source-thumbnail");
+      open.setAttribute("aria-label", `查看镜头 ${s.id} 的原素材`);
+      if (asset.thumbnail) {
+        const img = el("img");
+        img.src = "/api" + base() + `/assets/${asset.id}/thumbnail`;
+        img.alt = asset.name;
+        img.loading = "lazy";
+        open.append(img);
+      } else open.textContent = "预览";
+      open.onclick = () => openSource(asset, s);
+      const info = el("div");
+      info.append(el("div", asset.name));
+      info.append(
+        el(
+          "p",
+          asset.kind === "video"
+            ? `原片选用：${kept(s)
+                .map(([a, b]) => `${a.toFixed(1)}–${b.toFixed(1)} 秒`)
+                .join(
+                  "、",
+                )} · 原片共 ${Number(asset.duration || 0).toFixed(1)} 秒`
+            : `照片 · 成片展示 ${duration(s).toFixed(1)} 秒`,
+          "hint",
+        ),
+      );
+      const view = el(
+        "button",
+        asset.kind === "video" ? "查看原片 / 调整选段" : "查看原图",
+      );
+      view.onclick = () => openSource(asset, s);
+      const original = el("a", "单独打开原素材");
+      original.href = "/api" + base() + `/assets/${asset.id}/original`;
+      original.target = "_blank";
+      original.rel = "noopener";
+      info.append(view, original);
+      source.append(open, info);
+      row.append(source);
+    }
     if (selectedShot === s.id) {
       const fields = el("div", undefined, "shot-fields");
       for (const [key, label] of [

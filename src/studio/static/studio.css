@@ -491,3 +491,26 @@ dialog p {
   opacity: 0.65;
   cursor: wait;
 }
+
+.shot-source {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.source-thumbnail {
+  flex: 0 0 100px;
+  padding: 0;
+  overflow: hidden;
+}
+.source-thumbnail img {
+  display: block;
+  width: 100px;
+  height: 75px;
+  object-fit: contain;
+}
+.shot-source a {
+  display: inline-block;
+  margin: 8px;
+}
