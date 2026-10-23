@@ -155,6 +155,29 @@ def agent(folder, job, request):
     assets = read_json(folder / "assets.json")
     if not assets or any("thumbnail" not in a for a in assets):
         raise ValueError("请先完成素材整理")
+    context = request.get("context")
+    context_images = []
+    if context:
+        from .context import resolve_context
+        from .store import Store
+        from types import SimpleNamespace
+        store = Store(folder.parent.parent)
+        def jobdir(pid, jid):
+            if not isinstance(jid, str) or len(jid) != 32 or any(c not in "0123456789abcdef" for c in jid):
+                raise ValueError("任务编号无效")
+            return folder / "jobs" / jid
+        context, source = resolve_context(store, SimpleNamespace(jobdir=jobdir), folder.name, context)
+        frame = job / "context-frame.jpg"
+        if context.get("media_kind") == "photo":
+            with Image.open(source) as original:
+                im = ImageOps.exif_transpose(original).convert("RGB")
+                im.thumbnail((1280, 1280))
+                im.save(frame)
+        else:
+            run_command(["ffmpeg", "-v", "error", "-y", "-ss", str(context["time"]), "-i", str(source), "-frames:v", "1", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease", str(frame)])
+        if not frame.exists():
+            raise ValueError("无法读取所选时间点的画面")
+        context_images.append(("用户指定时间点的实际画面", frame))
     chosen = request.get("asset_ids", [])
     visible = [a for a in assets if a["id"] in chosen] if chosen else assets
     if not visible or len(visible) > 384:
@@ -177,7 +200,7 @@ fit 为 auto/cover/blur；zoom 为 null 或 {from:1,to:1.1,x:0.5,y:0.5}；坐标
         {
             "request": request["message"],
             "selected_shot": request.get("shot_id"),
-            "preview_time": request.get("time"),
+            "review_context": context,
             "visible_assets": [a["id"] for a in visible],
             "assets": public,
             "edl": edl,
@@ -189,7 +212,7 @@ fit 为 auto/cover/blur；zoom 为 null 或 {from:1,to:1.1,x:0.5,y:0.5}；坐标
         request["provider"],
         request["model"],
         prompt,
-        make_sheets(folder, visible, job),
+        context_images + make_sheets(folder, visible, job),
         request.get("base_url"),
     )
     apply_proposal({"edl": edl, "assets": assets}, result)

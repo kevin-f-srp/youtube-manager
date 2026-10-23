@@ -7,6 +7,7 @@ let config,
   jobSignature = "",
   projectId = "",
   showingSource = false;
+let sourceAsset = null, playbackJob = null, reviewAnchor = null;
 const chosen = new Set();
 const el = (tag, text, cls) => {
   const n = document.createElement(tag);
@@ -40,6 +41,7 @@ async function api(path, method = "GET", body) {
 const base = () => `/projects/${projectId}`;
 function mark() {
   dirty = true;
+  renderRanges();
   $("#dirty").textContent = "有未保存修改";
 }
 function duration(s) {
@@ -80,6 +82,7 @@ async function loadProject(id) {
   projectId = id;
   if (id) localStorage.setItem("studio-project", id);
   chosen.clear();
+  clearAnchor();
   selectedShot = null;
   dirty = false;
   jobSignature = "";
@@ -91,14 +94,80 @@ async function loadProject(id) {
   $("#context").textContent = "上下文：整个项目";
   renderAssets();
   renderShots();
-  showPreview();
+  await showPreview();
   await poll();
 }
-function showPreview() {
+async function showPreview() {
   if (!current) return;
+  const pid = projectId;
+  const playback = await api(base() + "/playback");
+  if (pid !== projectId) return;
   showingSource = false;
-  $("#preview").src = "/api" + base() + "/preview?v=" + Date.now();
+  sourceAsset = null;
+  playbackJob = playback.job_id;
+  $("#preview").poster = "";
+  $("#preview").src = playback.url;
   $("#preview-label").textContent = "最近一次成片预览（修改后需重新生成）";
+  renderRanges();
+}
+function kept(s) {
+  let spans = [[s.in, s.out]];
+  if (s.skip_on !== false) for (const [left, right] of s.skip || []) {
+    spans = spans.flatMap(([a,b]) => [[a, Math.min(b,left)], [Math.max(a,right),b]].filter(([x,y]) => y>x));
+  }
+  return spans;
+}
+function renderRanges() {
+  const root = $("#used-ranges");
+  root.replaceChildren();
+  if (!showingSource || !sourceAsset || !current) return;
+  root.append(el("p", "当前剪辑方案选用的时间段（点击跳转；含未保存修改）", "hint"));
+  const bar = el("div", undefined, "range-track");
+  root.append(bar);
+  let count = 0;
+  for (const shot of current.edl.shots) {
+    if (shot.enabled === false || ![sourceAsset.name, sourceAsset.name.replace(/\.[^.]+$/, "")].includes(shot.clip)) continue;
+    for (const [a,b] of kept(shot)) {
+      count++;
+      const label = `${shot.id} · ${a.toFixed(1)}–${b.toFixed(1)} 秒`;
+      const jump = () => { $("#preview").currentTime = a; $("#preview").pause(); };
+      const button = el("button", label); button.onclick = jump; root.append(button);
+      if (sourceAsset.duration) {
+        const block = el("button", undefined, "range-block");
+        block.style.left = `${100*a/sourceAsset.duration}%`;
+        block.style.width = `${100*(b-a)/sourceAsset.duration}%`;
+        block.title = label; block.setAttribute("aria-label", label); block.onclick = jump; bar.append(block);
+      }
+    }
+  }
+  bar.hidden = !sourceAsset.duration;
+  if (!count) root.append(el("p", "这份素材尚未被选入当前剪辑方案。", "hint"));
+}
+function clearAnchor() {
+  reviewAnchor = null;
+  $("#context").textContent = "上下文：整个项目；可点击「就此画面交流」指定画面";
+  $("#context-frame").hidden = true;
+}
+function anchorFrame() {
+  if (!current) throw Error("请先选择项目");
+  const video = $("#preview");
+  const photo = showingSource && sourceAsset?.kind === "photo";
+  if (!photo && (video.readyState < 2 || video.seeking)) throw Error("请等待画面加载后再定位");
+  video.pause();
+  reviewAnchor = showingSource
+    ? {kind:"source", asset_id:sourceAsset.id, time:photo ? 0 : video.currentTime}
+    : {kind:"cut", job_id:playbackJob, time:video.currentTime};
+  $("#context").textContent = `已定位：${showingSource ? "原素材 · " + sourceAsset.name : "成片"} · ${reviewAnchor.time.toFixed(2)} 秒`;
+  const image = $("#context-frame");
+  if (photo) image.src = video.poster;
+  else {
+    const canvas = document.createElement("canvas");
+    canvas.width = 480; canvas.height = 480*video.videoHeight/video.videoWidth;
+    canvas.getContext("2d").drawImage(video,0,0,canvas.width,canvas.height);
+    image.src = canvas.toDataURL("image/jpeg",.8);
+  }
+  image.hidden = false;
+  $("#message").focus();
 }
 function renderAssets() {
   $("#asset-count").textContent = current.assets.length;
@@ -120,6 +189,9 @@ function renderAssets() {
     if (a.thumbnail) img.src = "/api" + base() + `/assets/${a.id}/thumbnail`;
     img.onclick = () => {
       showingSource = true;
+      sourceAsset = a;
+      playbackJob = null;
+      renderRanges();
       $("#welcome").hidden = true;
       if (a.kind === "video") {
         $("#preview").src = "/api" + base() + `/assets/${a.id}/original`;
@@ -188,11 +260,10 @@ function renderShots() {
         `${s.id} · ${timeAt(s.id).toFixed(1)}s · ${s.note || s.clip || "标题卡"}`,
       ),
     );
-    head.onclick = () => {
+    head.onclick = async () => {
       selectedShot = s.id;
-      $("#context").textContent =
-        `上下文：${s.id} · 成片 ${timeAt(s.id).toFixed(1)} 秒`;
-      if (showingSource) showPreview();
+
+      if (showingSource) await showPreview();
       $("#preview").currentTime = timeAt(s.id);
       renderShots();
     };
@@ -304,7 +375,10 @@ async function poll() {
   const chat = $("#chat");
   chat.replaceChildren();
   for (const j of [...js].reverse()) {
-    if (j.message) chat.append(el("div", j.message, "bubble user"));
+    if (j.message) {
+      const prefix = j.context ? `[${j.context.kind === "source" ? "原素材 · " + j.context.name : "成片"} ${j.context.time.toFixed(2)} 秒]\n` : "";
+      chat.append(el("div", prefix + j.message, "bubble user"));
+    }
     if (j.result?.proposal)
       chat.append(el("div", j.result.proposal.summary, "bubble"));
   }
@@ -365,6 +439,9 @@ async function poll() {
       box.append(a);
       const b = el("button", "播放");
       b.onclick = () => {
+        showingSource = false; sourceAsset = null; playbackJob = j.id;
+        renderRanges();
+        $("#preview").poster = "";
         $("#preview").src = "/api" + base() + `/jobs/${j.id}/output`;
         $("#preview-label").textContent =
           "导出版本 " + j.result.revision.slice(0, 8);
@@ -413,7 +490,9 @@ $("#render-preview").onclick = () =>
   safe(() => start({ kind: "render", mode: "preview" }));
 $("#render-final").onclick = () =>
   safe(() => start({ kind: "render", mode: "final" }));
-$("#show-preview").onclick = showPreview;
+$("#show-preview").onclick = () => safe(showPreview);
+$("#anchor-frame").onclick = () => safe(anchorFrame);
+$("#clear-context").onclick = clearAnchor;
 $("#provider").onchange = () => {
   credentialStatus();
   localStorage.setItem("studio-provider", $("#provider").value);
@@ -434,11 +513,11 @@ $("#send").onclick = () =>
       model: $("#model").value.trim(),
       base_url: $("#base-url").value.trim() || null,
       message,
-      shot_id: selectedShot,
-      time: $("#preview").currentTime || 0,
+      context: reviewAnchor,
       asset_ids: [...chosen],
     });
     $("#message").value = "";
+    clearAnchor();
   });
 $("#preview").onloadedmetadata = () => {
   $("#welcome").hidden = true;

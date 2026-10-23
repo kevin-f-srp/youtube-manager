@@ -44,6 +44,66 @@ class StudioTests(unittest.TestCase):
         ]
         return current, edl
 
+    def test_review_anchor_source_and_invalid_time(self):
+        from src.studio.context import resolve_context
+        current, edl = self.draft()
+        self.store.save(self.pid, edl, current['revision'])
+        asset = current['assets'][0]
+        context, path = resolve_context(self.store, self.jobs, self.pid,
+            {'kind':'source', 'asset_id':asset['id'], 'time':0})
+        self.assertEqual(context['shot_ids'], ['s1'])
+        self.assertEqual(path, (self.raw / 'photo.jpg').resolve())
+        for t in [-1, float('nan'), '2', True]:
+            with self.assertRaises(ValueError):
+                resolve_context(self.store, self.jobs, self.pid,
+                    {'kind':'source', 'asset_id':asset['id'], 'time':t})
+        with self.assertRaises(ValueError):
+            resolve_context(self.store, self.jobs, self.pid,
+                {'kind':'source', 'asset_id':'unknown', 'time':0})
+
+    def test_agent_receives_located_frame(self):
+        from src.studio.worker import agent, scan
+        from src.studio.store import write_json
+        current, edl = self.draft()
+        self.store.save(self.pid, edl, current['revision'])
+        folder = self.store.directory(self.pid)
+        job = folder / 'jobs' / ('b' * 32)
+        job.mkdir(parents=True)
+        scan(folder, job)
+        write_json(job / 'input-edl.json', edl)
+        req = {'message':'保留这个画面', 'provider':'openai', 'model':'mock',
+               'context':{'kind':'source', 'asset_id':current['assets'][0]['id'], 'time':0}}
+        with patch('src.studio.harness.propose', return_value={'summary':'保留', 'shots':edl['shots']}) as model:
+            agent(folder, job, req)
+            args = model.call_args.args
+            self.assertIn('review_context', args[3])
+            self.assertIn('s1', args[3])
+            self.assertEqual(args[4][0][1].name, 'context-frame.jpg')
+            with Image.open(args[4][0][1]) as image:
+                self.assertEqual(image.size, (80,120))
+
+    def test_cut_anchor_uses_render_snapshot_with_skip_and_speed(self):
+        from src.studio.context import resolve_context, segments
+        from src.studio.store import write_json
+        shot = {'id':'old-shot', 'clip':'movie', 'in':10, 'out':20,
+                'skip':[[12,14]], 'speed':2}
+        self.assertEqual(segments(shot), [(10,12),(14,20)])
+        jid = 'a' * 32
+        folder = self.store.directory(self.pid) / 'jobs' / jid
+        folder.mkdir(parents=True)
+        output = folder / 'preview.mp4'
+        output.touch()
+        write_json(folder / 'job.json', {'state':'completed'})
+        write_json(folder / 'result.json', {'output':str(output), 'duration':4})
+        write_json(folder / 'input-edl.json', {'shots':[shot]})
+        context, _ = resolve_context(self.store, self.jobs, self.pid,
+            {'kind':'cut', 'job_id':jid, 'time':2})
+        self.assertEqual(context['shot_ids'], ['old-shot'])
+        self.assertEqual(context['source_time'], 16)
+        with self.assertRaises(ValueError):
+            resolve_context(self.store, self.jobs, self.pid,
+                {'kind':'cut', 'job_id':jid, 'time':4})
+
     def test_import_never_writes_source_and_revision_conflict(self):
         current, edl = self.draft()
         rev = self.store.save(self.pid, edl, current["revision"])

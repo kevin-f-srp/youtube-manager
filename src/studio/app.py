@@ -17,6 +17,7 @@ import uuid
 from flask import Flask, abort, jsonify, request, send_file
 from .store import Store, Conflict, read_json, write_json, apply_proposal
 from .harness import PROVIDERS
+from .context import resolve_context
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -79,6 +80,7 @@ class Jobs:
                 "created": time.time(),
                 "base_revision": current["revision"],
                 "message": payload.get("message", ""),
+                "context": payload.get("context"),
             }
             write_json(job / "job.json", meta)
             try:
@@ -199,7 +201,7 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
+            "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; frame-ancestors 'none'"
         )
         return response
 
@@ -314,6 +316,9 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
                 or urlparse(data["base_url"]).scheme not in ("https", "http")
             ):
                 raise ValueError("服务地址必须是 HTTP 或 HTTPS 地址")
+            if data.get("context") is not None:
+                context, _ = resolve_context(store, jobs, pid, data["context"])
+                data["context"] = context
             if not isinstance(data.get("asset_ids", []), list):
                 raise ValueError("素材选择无效")
         elif kind == "render":
@@ -357,6 +362,12 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
         return send_file(
             target, conditional=True, as_attachment=request.args.get("download") == "1"
         )
+
+    @app.get("/api/projects/<pid>/playback")
+    def playback(pid):
+        finished = [j for j in jobs.list(pid) if j["state"] == "completed" and j.get("result", {}).get("mode") == "preview"]
+        jid = finished[0]["id"] if finished else None
+        return jsonify(job_id=jid, url=f"/api/projects/{pid}/jobs/{jid}/output" if jid else f"/api/projects/{pid}/preview")
 
     @app.get("/api/projects/<pid>/preview")
     def preview(pid):

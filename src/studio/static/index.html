@@ -52,6 +52,8 @@
           <span id="preview-label">未生成预览</span
           ><button id="show-preview">返回成片</button>
         </div>
+        <div id="used-ranges"></div>
+        <button id="anchor-frame">就此画面交流</button>
         <div class="toolbar">
           <button id="scan">整理素材</button
           ><button id="render-preview" class="primary">生成预览</button
@@ -95,7 +97,7 @@
               placeholder="不会写入项目文件" /></label
           ><button id="set-key">配置密钥</button>
           <p class="hint">
-            仅将请求、工程信息和素材缩略图发送给所选模型服务。密钥不写入项目文件。
+            仅将请求、工程信息、定位画面和素材缩略图发送给所选模型服务。密钥不写入项目文件。
           </p>
         </details>
         <div id="chat" class="chat">
@@ -104,6 +106,8 @@
           </p>
         </div>
         <div class="composer">
+          <img id="context-frame" hidden alt="已定位的画面" />
+          <button id="clear-context">清除画面定位</button>
           <span id="context" class="hint">上下文：整个项目</span
           ><textarea
             id="message"
