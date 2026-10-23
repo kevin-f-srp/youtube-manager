@@ -91,7 +91,7 @@ async function loadProject(id) {
   $("#project-name").textContent = current.project.name;
   $("#version").textContent = "版本 " + current.revision.slice(0, 8);
   $("#dirty").textContent = "";
-  $("#context").textContent = "上下文：整个项目";
+  $("#context").textContent = "发送时自动附带播放器当前画面与时间";
   renderAssets();
   renderShots();
   await showPreview();
@@ -145,15 +145,15 @@ function renderRanges() {
 }
 function clearAnchor() {
   reviewAnchor = null;
-  $("#context").textContent = "上下文：整个项目；可点击「就此画面交流」指定画面";
+  $("#context").textContent = "发送时自动附带播放器当前画面与时间";
   $("#context-frame").hidden = true;
 }
-function anchorFrame() {
+function anchorFrame(pause = true) {
   if (!current) throw Error("请先选择项目");
   const video = $("#preview");
   const photo = showingSource && sourceAsset?.kind === "photo";
   if (!photo && (video.readyState < 2 || video.seeking)) throw Error("请等待画面加载后再定位");
-  video.pause();
+  if (pause) video.pause();
   reviewAnchor = showingSource
     ? {kind:"source", asset_id:sourceAsset.id, time:photo ? 0 : video.currentTime}
     : {kind:"cut", job_id:playbackJob, time:video.currentTime};
@@ -167,7 +167,7 @@ function anchorFrame() {
     image.src = canvas.toDataURL("image/jpeg",.8);
   }
   image.hidden = false;
-  $("#message").focus();
+  if (pause) $("#message").focus();
 }
 function renderAssets() {
   $("#asset-count").textContent = current.assets.length;
@@ -491,7 +491,7 @@ $("#render-preview").onclick = () =>
 $("#render-final").onclick = () =>
   safe(() => start({ kind: "render", mode: "final" }));
 $("#show-preview").onclick = () => safe(showPreview);
-$("#anchor-frame").onclick = () => safe(anchorFrame);
+$("#anchor-frame").onclick = () => safe(() => { $("#attach-frame").checked = true; anchorFrame(); });
 $("#clear-context").onclick = clearAnchor;
 $("#provider").onchange = () => {
   credentialStatus();
@@ -503,6 +503,8 @@ $("#send").onclick = () =>
   safe(async () => {
     const message = $("#message").value.trim();
     if (!message) throw Error("请输入剪辑要求");
+    if ($("#attach-frame").checked) anchorFrame(false);
+    else reviewAnchor = null;
     localStorage.setItem(
       "studio-model-" + $("#provider").value,
       $("#model").value,

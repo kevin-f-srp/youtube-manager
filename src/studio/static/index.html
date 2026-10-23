@@ -53,7 +53,7 @@
           ><button id="show-preview">返回成片</button>
         </div>
         <div id="used-ranges"></div>
-        <button id="anchor-frame">就此画面交流</button>
+        <button id="anchor-frame">暂停并查看交流画面</button>
         <div class="toolbar">
           <button id="scan">整理素材</button
           ><button id="render-preview" class="primary">生成预览</button
@@ -107,8 +107,9 @@
         </div>
         <div class="composer">
           <img id="context-frame" hidden alt="已定位的画面" />
-          <button id="clear-context">清除画面定位</button>
-          <span id="context" class="hint">上下文：整个项目</span
+          <label><input id="attach-frame" type="checkbox" checked />发送时附带当前画面</label>
+          <button id="clear-context">收起画面预览</button>
+          <span id="context" class="hint">发送时自动附带播放器当前画面与时间</span
           ><textarea
             id="message"
             rows="4"
