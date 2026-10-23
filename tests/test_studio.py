@@ -61,6 +61,21 @@ class StudioTests(unittest.TestCase):
             resolve_context(self.store, self.jobs, self.pid,
                 {'kind':'source', 'asset_id':'unknown', 'time':0})
 
+    def test_all_384_assets_fit_image_budget_without_omissions(self):
+        from src.studio.worker import make_sheets
+        folder = self.root / 'sheets'
+        (folder / 'thumbs').mkdir(parents=True)
+        Image.new('RGB', (350, 280), 'red').save(folder / 'thumbs' / 'source.jpg')
+        assets = [{'id':f'a{i:04}', 'thumbnail':'source.jpg'} for i in range(384)]
+        with patch('src.studio.worker.ImageDraw.Draw') as draw:
+            images = make_sheets(folder, assets, folder)
+            labels = [call.args[1] for call in draw.return_value.text.call_args_list]
+        self.assertEqual(labels, [a['id'] for a in assets])
+        self.assertEqual(len(images), 16)
+        self.assertLessEqual(len(images) + 1, 20)
+        with Image.open(images[-1][1]) as image:
+            self.assertEqual(image.size, (1440,1920))
+
     def test_agent_receives_located_frame(self):
         from src.studio.worker import agent, scan
         from src.studio.store import write_json

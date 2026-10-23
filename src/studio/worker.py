@@ -133,16 +133,19 @@ def scan(folder, job):
 
 def make_sheets(folder, assets, job):
     results = []
-    for start in range(0, len(assets), 12):
-        sheet = Image.new("RGB", (1440, 960), "#151a23")
+    # At most 16 sheets for 384 assets, plus one review frame; Harness allows 20.
+    per_sheet = 24
+    for start in range(0, len(assets), per_sheet):
+        rows = (min(per_sheet, len(assets) - start) + 3) // 4
+        sheet = Image.new("RGB", (1440, rows * 320), "#151a23")
         draw = ImageDraw.Draw(sheet)
-        for j, a in enumerate(assets[start : start + 12]):
+        for j, a in enumerate(assets[start : start + per_sheet]):
             with Image.open(folder / "thumbs" / a["thumbnail"]) as source:
                 im = ImageOps.contain(source.convert("RGB"), (350, 280))
             x, y = (j % 4) * 360, (j // 4) * 320
             sheet.paste(im, (x + (350 - im.width) // 2, y))
             draw.text((x + 6, y + 285), a["id"], fill="white")
-        path = job / f"sheet-{start // 12}.jpg"
+        path = job / f"sheet-{start // per_sheet}.jpg"
         sheet.save(path, quality=85)
         results.append((path.name, path))
     return results

@@ -176,12 +176,14 @@ class HarnessProtocolTests(unittest.TestCase):
                         provider,
                         model,
                         "Return JSON",
-                        images=[("test.jpg", image)],
+                        images=[(f"sheet-{i}.jpg", image) for i in range(17)],
                         base_url=base,
                     )
                     self.assertEqual(result["shots"], [])
                     self.assertEqual(server.captured["data"].get("tools", []), [])
-                    self.assertIn("image", json.dumps(server.captured["data"]))
+                    payload = server.captured["data"]
+                    blocks = [block for msg in payload.get("input", payload.get("messages", [])) if isinstance(msg, dict) for block in msg.get("content", []) if isinstance(block, dict)]
+                    self.assertEqual(sum(block.get("type") in ("image", "input_image") for block in blocks), 17)
                     if provider == "anthropic":
                         self.assertTrue(
                             server.captured["path"].startswith("/v1/messages")

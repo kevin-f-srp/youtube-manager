@@ -51,6 +51,9 @@ def propose(home, provider, model, prompt, images=(), base_url=None):
         raise ValueError(
             f"服务进程未配置 {PROVIDERS[provider]}；请在本机设置后重新启动"
         )
+    images = list(images)
+    if len(images) > 20:
+        raise ValueError("本次请求超过 20 张图片，请减少素材范围后重试")
     home = Path(home).resolve()
     home.mkdir(parents=True, exist_ok=True)
     patch = home / "studio.patch.json"
