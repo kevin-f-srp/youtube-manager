@@ -10,6 +10,8 @@ let config,
 let sourceAsset = null,
   playbackJob = null,
   reviewAnchor = null;
+let sending = false;
+let latestAgentJobs = [];
 const chosen = new Set();
 const el = (tag, text, cls) => {
   const n = document.createElement(tag);
@@ -84,6 +86,9 @@ async function loadProject(id) {
   projectId = id;
   if (id) localStorage.setItem("studio-project", id);
   chosen.clear();
+  latestAgentJobs = [];
+  $("#send-error").hidden = true;
+  updateSendStatus();
   clearAnchor();
   selectedShot = null;
   dirty = false;
@@ -387,18 +392,52 @@ async function save() {
   $("#dirty").textContent = "已保存";
   $("#version").textContent = "版本 " + d.revision.slice(0, 8);
 }
-async function start(payload) {
+function updateSendStatus() {
+  if (sending || !$("#send-error").hidden) return;
+  const latest = latestAgentJobs[0];
+  const active = latestAgentJobs.find(
+    (j) => j.state === "running" || j.state === "queued",
+  );
+  const draft = $("#message").value.trim();
+  let text;
+  if (active) {
+    text =
+      active.state === "queued" ? "消息已收到，排队等待处理" : "Agent 正在处理";
+    text += `：「${active.message.slice(0, 50)}」`;
+    if (active.progress?.step) text += " · " + active.progress.step;
+    if (draft) text = "输入框中的草稿尚未发送。" + text;
+  } else if (draft) text = "草稿尚未发送";
+  else if (latest) {
+    const states = {
+      completed: "已回复",
+      failed: "处理失败",
+      cancelled: "已取消",
+      interrupted: "处理已中断",
+    };
+    text = `最近一条${states[latest.state] || latest.state}：「${latest.message.slice(0, 50)}」`;
+    if (latest.error) text += " · " + (latest.error.error || latest.error);
+  } else text = "尚未发送消息";
+  $("#send-status").textContent = text;
+}
+async function start(payload, accepted) {
   if (!current) throw Error("请先导入或选择项目");
   if (dirty) await save();
-  await api(base() + "/jobs", "POST", payload);
+  const job = await api(base() + "/jobs", "POST", payload);
+  if (accepted) accepted(job);
   jobSignature = "";
-  await poll();
+  // A polling failure must never turn an accepted message into a false send failure.
+  await poll().catch(() => {
+    $("#agent-state").textContent = "状态暂时无法刷新";
+  });
+  return job;
 }
 async function poll() {
   if (!projectId) return;
   const id = projectId,
     js = await api(base() + "/jobs");
   if (id !== projectId) return;
+  latestAgentJobs = js.filter((j) => j.kind === "agent");
+  updateSendStatus();
   const status = await api(base() + "/agent");
   if (id !== projectId) return;
   $("#agent-state").textContent =
@@ -623,28 +662,60 @@ $("#provider").onchange = () => {
   $("#base-url").value =
     localStorage.getItem("studio-base-url-" + $("#provider").value) || "";
 };
-$("#send").onclick = () =>
-  safe(async () => {
+$("#message").oninput = updateSendStatus;
+$("#send").onclick = async () => {
+  if (sending) return;
+  sending = true;
+  $("#send").disabled = true;
+  $("#send").textContent = "正在提交…";
+  $("#send-error").hidden = true;
+  $("#send-status").textContent = "正在提交消息，等待服务确认…";
+  try {
     const message = $("#message").value.trim();
-    if (!message) throw Error("请输入剪辑要求");
+    if (!message) throw Error("请输入消息");
+    config = await api("/config");
+    credentialStatus();
+    const provider = $("#provider").value;
+    if (!config.providers.find((p) => p.id === provider)?.configured) {
+      $("#api-key").closest("details").open = true;
+      throw Error(
+        "消息未发送：当前服务没有 API 密钥（服务重启后需要重新填写）。请在「连接配置」填写密钥并点击「配置密钥」，再发送。代理地址仍会保留。",
+      );
+    }
     if ($("#attach-frame").checked) anchorFrame(false);
     else reviewAnchor = null;
-    localStorage.setItem(
-      "studio-model-" + $("#provider").value,
-      $("#model").value,
+    localStorage.setItem("studio-model-" + provider, $("#model").value);
+    await start(
+      {
+        kind: "agent",
+        provider,
+        model: $("#model").value.trim(),
+        base_url: $("#base-url").value.trim() || null,
+        message,
+        context: reviewAnchor,
+        asset_ids: [...chosen],
+      },
+      (job) => {
+        latestAgentJobs = [job, ...latestAgentJobs];
+        if ($("#message").value.trim() === message) $("#message").value = "";
+        clearAnchor();
+        $("#send-status").textContent =
+          job.state === "queued"
+            ? "消息已收到，排队等待处理"
+            : "消息已收到，Agent 正在处理";
+      },
     );
-    await start({
-      kind: "agent",
-      provider: $("#provider").value,
-      model: $("#model").value.trim(),
-      base_url: $("#base-url").value.trim() || null,
-      message,
-      context: reviewAnchor,
-      asset_ids: [...chosen],
-    });
-    $("#message").value = "";
-    clearAnchor();
-  });
+  } catch (error) {
+    $("#send-status").textContent = "发送失败，草稿已保留";
+    $("#send-error").textContent = error.message;
+    $("#send-error").hidden = false;
+  } finally {
+    sending = false;
+    $("#send").disabled = false;
+    $("#send").textContent = "发送";
+    updateSendStatus();
+  }
+};
 $("#preview").onloadedmetadata = () => {
   $("#welcome").hidden = true;
   $("#preview").poster = "";
@@ -700,5 +771,7 @@ $("#set-key").onclick = () =>
     $("#api-key").value = "";
     config = await api("/config");
     credentialStatus();
+    $("#send-error").hidden = true;
+    updateSendStatus();
     toast("密钥已配置，仅保存在本次服务内存中");
   });

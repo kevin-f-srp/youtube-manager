@@ -470,3 +470,24 @@ dialog p {
 #agent-state {
   white-space: normal;
 }
+
+#send-status {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--accent);
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+#send-error {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #ffb6a9;
+  background: #432b2b;
+  padding: 12px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+#send:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
