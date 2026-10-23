@@ -153,6 +153,48 @@ function renderRanges() {
         "hint",
       ),
     );
+    const editor = el("div", undefined, "source-trim");
+    editor.append(el("strong", `调整镜头 ${selected.id} 的选段`));
+    editor.append(
+      el(
+        "p",
+        "播放或拖动原视频找到位置，再设置起点、终点；也可直接输入秒数。修改后需保存并生成预览。",
+        "hint",
+      ),
+    );
+    const fields = el("div", undefined, "shot-fields");
+    for (const [key, label] of [
+      ["in", "选段起点 / 秒"],
+      ["out", "选段终点 / 秒"],
+    ]) {
+      const wrapper = el("label", label);
+      const input = el("input");
+      input.type = "number";
+      input.min = 0;
+      input.max = sourceAsset.duration;
+      input.step = ".1";
+      input.value = selected[key];
+      input.onchange = () => {
+        const value = Number(input.value);
+        if (
+          !input.value ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          value > sourceAsset.duration ||
+          (key === "in" ? value >= selected.out : value <= selected.in)
+        ) {
+          input.value = selected[key];
+          return toast("请输入原片时长内的时间，且起点须早于终点");
+        }
+        selected[key] = value;
+        mark();
+        renderShots();
+      };
+      wrapper.append(input);
+      fields.append(wrapper);
+    }
+    editor.append(fields);
+    root.append(editor);
     for (const [key, label] of [
       ["in", "将当前播放位置设为起点"],
       ["out", "将当前播放位置设为终点"],
@@ -172,7 +214,7 @@ function renderRanges() {
         renderShots();
         toast("取用范围已调整；保存后生成预览即可查看效果");
       };
-      root.append(button);
+      editor.append(button);
     }
   }
   let count = 0;
@@ -268,7 +310,8 @@ function openSource(a, shot = null) {
   clearAnchor();
   renderRanges();
   renderShots();
-  player.scrollIntoView({ behavior: "smooth", block: "center" });
+  const target = $(".source-trim") || player;
+  target.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function shotAsset(shot) {
   return current.assets.find((a) =>
@@ -351,7 +394,8 @@ function renderShots() {
         `${s.id} · ${timeAt(s.id).toFixed(1)}s · ${s.note || s.clip || "标题卡"}`,
       ),
     );
-    head.onclick = async () => {
+    head.onclick = async (event) => {
+      event.stopPropagation();
       selectedShot = s.id;
 
       if (showingSource) await showPreview();
@@ -376,6 +420,17 @@ function renderShots() {
       };
       head.append(b);
     }
+    row.onclick = (event) => {
+      if (
+        event.target.closest(
+          "button, a, input, select, textarea, label, details",
+        )
+      )
+        return;
+      selectedShot = selectedShot === s.id ? null : s.id;
+      renderShots();
+      renderRanges();
+    };
     row.append(head);
     const asset = shotAsset(s);
     if (asset) {
@@ -407,7 +462,7 @@ function renderShots() {
       );
       const view = el(
         "button",
-        asset.kind === "video" ? "查看原片 / 调整选段" : "查看原图",
+        asset.kind === "video" ? "查看原片" : "查看原图",
       );
       view.onclick = () => openSource(asset, s);
       const original = el("a", "单独打开原素材");

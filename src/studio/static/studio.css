@@ -514,3 +514,16 @@ dialog p {
   display: inline-block;
   margin: 8px;
 }
+
+.source-trim {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px solid var(--accent, #bce4ab);
+  border-radius: 12px;
+}
+.source-trim > button {
+  margin: 8px 8px 0 0;
+}
+.shot {
+  cursor: pointer;
+}
