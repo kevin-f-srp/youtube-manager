@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import uuid
 
 from flask import Flask, abort, jsonify, request, send_file
-from .store import Store, Conflict, read_json, write_json, apply_proposal
+from .store import Store, Conflict, read_json, write_json, apply_proposal, proposal_changes
 from .harness import PROVIDERS
 from .context import resolve_context
 
@@ -47,6 +47,8 @@ class Jobs:
                     p = file.parent / (extra + ".json")
                     if p.exists():
                         data[extra] = read_json(p)
+                if data.get("result", {}).get("proposal"):
+                    data["result"]["changes"] = proposal_changes(read_json(file.parent / "input-edl.json"), data["result"]["proposal"])
                 location = file.parent / "render-location.json"
                 if data["state"] == "running" and location.exists():
                     status = Path(read_json(location)["edit"]) / "render_status.json"
@@ -344,6 +346,10 @@ def create_app(data_root, engine_root=REPO, engine_python=sys.executable):
             if "proposal" not in result:
                 raise ValueError("该任务没有剪辑建议")
             current = store.load(pid)
+            if current["revision"] != result["base_revision"]:
+                raise Conflict("工程已经变化，请重新生成建议")
+            if not proposal_changes(read_json(path / "input-edl.json"), result["proposal"]):
+                raise ValueError("这次回复没有实际修改，无需应用")
             edl = apply_proposal(current, result["proposal"])
             rev = store.save(pid, edl, result["base_revision"])
         return jsonify(revision=rev)

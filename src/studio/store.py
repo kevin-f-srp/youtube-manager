@@ -242,3 +242,25 @@ def apply_proposal(current, proposal):
     edl["shots"] = proposal["shots"]
     validate(edl, current["edl"], current["assets"])
     return edl
+
+
+def proposal_changes(edl, proposal):
+    """Derive executable changes from data, never from the model's prose."""
+    before = edl['shots']
+    after = proposal['shots']
+    old = {s['id']: s for s in before}
+    new = {s['id']: s for s in after}
+    changes = []
+    for sid in old.keys() - new.keys():
+        changes.append({'shot_id': sid, 'field': '镜头', 'before': old[sid], 'after': None})
+    for shot in after:
+        sid = shot['id']
+        if sid not in old:
+            changes.append({'shot_id':sid, 'field':'镜头', 'before':None, 'after':shot})
+        else:
+            for field in sorted(old[sid].keys() | shot.keys()):
+                if old[sid].get(field) != shot.get(field):
+                    changes.append({'shot_id':sid, 'field':field, 'before':old[sid].get(field), 'after':shot.get(field)})
+    if [s['id'] for s in before if s['id'] in new] != [s['id'] for s in after if s['id'] in old]:
+        changes.append({'shot_id':'', 'field':'顺序', 'before':[s['id'] for s in before], 'after':[s['id'] for s in after]})
+    return changes

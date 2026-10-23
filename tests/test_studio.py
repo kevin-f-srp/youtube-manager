@@ -61,6 +61,27 @@ class StudioTests(unittest.TestCase):
             resolve_context(self.store, self.jobs, self.pid,
                 {'kind':'source', 'asset_id':'unknown', 'time':0})
 
+    def test_explanation_has_no_applicable_changes(self):
+        from src.studio.store import proposal_changes, write_json
+        current, edl = self.draft()
+        rev = self.store.save(self.pid, edl, current['revision'])
+        proposal = {'summary':'仅解释，不修改', 'shots':edl['shots']}
+        self.assertEqual(proposal_changes(edl, proposal), [])
+        changed = copy.deepcopy(proposal)
+        changed['shots'][0]['out'] = 2
+        changes = proposal_changes(edl, changed)
+        self.assertEqual(changes, [{'shot_id':'s1','field':'out','before':3,'after':2}])
+        jid = 'e' * 32
+        folder = self.store.directory(self.pid) / 'jobs' / jid
+        write_json(folder / 'job.json', {'id':jid,'state':'completed','kind':'agent','created':0})
+        write_json(folder / 'input-edl.json', edl)
+        write_json(folder / 'result.json', {'proposal':proposal,'base_revision':rev})
+        response = self.post(self.base + '/jobs/' + jid + '/apply', {})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('没有实际修改', response.json['error'])
+        self.assertEqual(self.store.load(self.pid)['revision'], rev)
+        self.assertEqual(self.client.get(self.base + '/jobs').json[0]['result']['changes'], [])
+
     def test_model_auth_error_is_actionable_and_does_not_echo_key(self):
         from src.studio.harness import failure_message
         from types import SimpleNamespace

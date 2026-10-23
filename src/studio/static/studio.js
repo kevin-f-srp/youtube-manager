@@ -394,7 +394,7 @@ async function poll() {
     box.append(
       el(
         "strong",
-        `${{ scan: "素材整理", agent: "剪辑建议", render: "视频导出" }[j.kind]} · ${states[j.state] || j.state}`,
+        `${{ scan: "素材整理", agent: "助手回复", render: "视频导出" }[j.kind]} · ${states[j.state] || j.state}`,
       ),
     );
     if (j.progress) {
@@ -416,7 +416,18 @@ async function poll() {
         });
       box.append(b);
     }
-    if (j.result?.proposal) {
+    if (j.result?.proposal && !j.result.changes?.length) {
+      box.append(el("p", "仅回答问题，没有修改剪辑方案，无需应用。"));
+    }
+    if (j.result?.changes?.length) {
+      const details = el("details");
+      details.append(el("summary", `查看 ${j.result.changes.length} 项实际修改`));
+      const labels = {in:"原片起点", out:"原片终点", speed:"播放倍速", enabled:"启用", fit:"画幅", zoom:"缩放", subs:"字幕", note:"镜头说明"};
+      for (const c of j.result.changes) {
+        details.append(el("strong", `${c.shot_id} · ${labels[c.field] || c.field}`));
+        details.append(el("pre", `修改前：${JSON.stringify(c.before, null, 2)}\n修改后：${JSON.stringify(c.after, null, 2)}`));
+      }
+      box.append(details);
       const b = el("button", "应用建议");
       b.disabled = j.result.base_revision !== current.revision || dirty;
       b.onclick = () =>
