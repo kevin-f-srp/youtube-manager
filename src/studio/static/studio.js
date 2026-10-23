@@ -491,7 +491,7 @@ async function poll() {
         `${{ scan: "素材整理", agent: "助手回复", render: "视频导出" }[j.kind]} · ${states[j.state] || j.state}`,
       ),
     );
-    if (j.progress) {
+    if (j.progress && j.kind !== "agent") {
       const p = el("progress");
       p.max = 1;
       p.value = j.progress.progress || 0;
@@ -552,10 +552,11 @@ async function poll() {
     }
     if (j.result?.answer)
       box.append(el("p", j.result.applied ? "修改已保存到项目副本" : "已回复"));
-    if (j.events?.length) {
-      const details = el("details");
-      details.append(el("summary", "执行过程"));
-      for (const event of j.events)
+    if (j.kind === "agent" || j.events?.length) {
+      const details = el("div");
+      details.className = "execution-log";
+      details.append(el("strong", "执行过程"));
+      for (const event of j.events || [])
         if (event.type === "tool/call" || event.type === "tool/result")
           details.append(
             el(
@@ -563,6 +564,17 @@ async function poll() {
               `${event.type === "tool/call" ? "调用" : event.error ? "失败" : "完成"} ${event.label || event.action || event.tool || "剪辑工具"}`,
             ),
           );
+      if (j.kind === "agent") {
+        const status = {
+          queued: "等待前一个任务完成",
+          running: j.progress?.step || "正在连接助手，等待执行更新…",
+          completed: "处理已完成",
+          failed: "处理失败，原因见上方",
+          cancelled: "任务已取消",
+          interrupted: "任务已中断",
+        };
+        details.append(el("p", status[j.state] || j.state));
+      }
       box.append(details);
     }
     for (const artifact of j.artifacts || []) {
